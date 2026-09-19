@@ -225,14 +225,26 @@ over container names, host ports and IP ranges.
 ### 1.7 Where state actually lives
 
 Three storage mechanisms, with very different durability. Knowing which is which tells
-you what a given `docker compose` command will destroy.
+you what a given command will destroy.
 
-| What | Mechanism | Survives `down` | Survives `down -v` |
-| --- | --- | --- | --- |
-| Server + app **code** | bind mount from `workspace/` | ✅ it is your git worktree | ✅ untouched |
-| Databases | named volume `<project>_mysql` | ✅ | ❌ **all instances** |
-| `nextcloud` config/data/apps-writable | named volumes `<project>_config`, `_data`, … | ✅ | ❌ |
-| `stableNN` config/data/apps-writable | **anonymous** volumes | ✅ | ❌ |
+The column that matters is the middle one: **stopping is not the same as removing, and
+removing a container is not the same as removing its volume.**
+
+| What | Mechanism | `stop`/`start` | `down` then `up` | `down -v` |
+| --- | --- | --- | --- | --- |
+| Server + app **code** | bind mount from `workspace/` | ✅ | ✅ it is your git worktree | ✅ untouched |
+| Databases | named volume `<project>_mysql` | ✅ | ✅ | ❌ **all instances** |
+| `nextcloud` config/data/apps-writable | named volumes `<project>_config`, `_data`, … | ✅ | ✅ | ❌ |
+| `stableNN` config/data/apps-writable | **anonymous** volumes | ✅ | ❌ **orphaned** | ❌ |
+
+That last cell is the one nobody expects, and it is not a `-v` problem. A named volume is
+looked up by name, so a rebuilt container reattaches to it. An anonymous volume is
+identified only by its attachment to a container — remove the container and the link is
+gone. `up` then creates a **new, empty** anonymous volume, and the old one survives on
+disk as an unreferenced orphan holding data nothing can reach.
+
+So `docker compose down && docker compose up -d` silently re-runs the installer on every
+`stableNN` instance while leaving `nextcloud` and the databases perfectly intact.
 
 ```bash
 docker volume ls --format '{{.Name}}' | grep "^${COMPOSE_PROJECT_NAME}"
@@ -243,18 +255,40 @@ docker inspect <project>-stable34-1 \
   --format '{{range .Mounts}}{{.Type}} {{.Name}} -> {{.Destination}}{{"\n"}}{{end}}'
 ```
 
-The asymmetry in the last two rows is the trap in this layout:
+The asymmetry between the last two rows is the trap in this layout:
 
 - **`docker compose down -v` destroys every instance's config and data**, stable
-  instances included. They re-run the installer on next start, with fresh admin
-  credentials and no app state. Your code is safe — it is a bind mount — but everything
-  else goes.
+  instances included, plus the databases. Your code is safe — it is a bind mount — but
+  everything else goes.
+- **`docker compose down` (no `-v`) still resets the stable instances**, for the reason
+  above. Harmless if you treat them as disposable; surprising if you assumed `-v` was the
+  only destructive form.
 - **`docker compose up --renew-anon-volumes` resets the stable instances only**, leaving
   `nextcloud` untouched. A confusing half-wipe.
-- Anonymous volumes are **orphaned, not reused**, when a stable container is recreated
-  from a changed service definition. They accumulate; `docker volume prune` reclaims them.
+- Orphaned anonymous volumes accumulate with every such cycle. `docker volume ls -qf
+  dangling=true | wc -l` counts them; `docker volume prune` reclaims the space.
 
-Treat stable instances as disposable, and default to `docker compose down` without `-v`.
+Treat stable instances as disposable. Nothing you cannot re-create belongs on one.
+
+### Which button does what
+
+Docker Desktop's project-row controls map onto compose verbs that are **weaker** than
+`down` — they stop containers without removing them, so nothing above is at risk:
+
+| Docker Desktop (project row) | Compose equivalent | Containers | Anonymous volumes |
+| --- | --- | --- | --- |
+| **Stop** ⏹ | `docker compose stop` | kept, `Exited` | kept — same container, same volume |
+| **Play** ▶ | `docker compose start` | the **same** containers resume | kept |
+| **Delete** 🗑 | `docker compose down` | removed | ❌ orphaned |
+
+Stop/Play is therefore the safest way to park the environment, and the right default for
+day-to-day use.
+
+It has one cost, and it is the same trap as `restart`: **`start` resumes the existing
+container, so it can never pick up a newly pulled image.** After `make pull-installed`,
+the Play button will keep running the old image indefinitely, reporting no error. Only
+`docker compose up -d` recreates containers against the new image — which is why the
+runbook in Part 4 ends with `up -d` rather than a restart.
 
 Note that user files live in a volume at `/var/www/html/data`, **not** in the git
 worktree — which is why uploading test files never dirties `git status`.
@@ -263,8 +297,10 @@ worktree — which is why uploading test files never dirties `git status`.
 
 ```bash
 # start / stop
-docker compose up -d nextcloud stable34
-docker compose down                      # keeps volumes
+docker compose up -d nextcloud stable34  # creates or recreates; adopts new images
+docker compose stop                      # = Docker Desktop's Stop. Safest park.
+docker compose start                     # = Docker Desktop's Play. Keeps the old image.
+docker compose down                      # removes containers; ⚠ resets stableNN instances
 docker compose down -v                   # ⚠ wipes every instance's DB, config, data
 
 # occ, the tool you will use most
@@ -282,8 +318,9 @@ docker compose exec -u www-data nextcloud bash
 Always `-u www-data`. Running `occ` as root writes root-owned files into the bind-mounted
 worktree, and the web server then cannot read them.
 
-**Use `up -d`, not `restart`, after pulling images.** `restart` reuses the existing
-container and therefore the old image; only `up -d` recreates it against the new one.
+**Use `up -d` after pulling images — not `restart`, and not Docker Desktop's Play
+button.** All three of `restart`, `start` and Play reuse the existing container, and
+therefore the old image. Only `up -d` recreates it against the new one.
 
 ---
 
@@ -771,7 +808,7 @@ Every instance installs with the same fixtures, which is what makes them disposa
 - [ ] `make pull-installed`
 - [ ] `git pull` in **every** `workspace/*` worktree (name the branch for stable ones)
 - [ ] `git submodule update --init` in each worktree that moved
-- [ ] `docker compose up -d <services>` — `up -d`, not `restart`
+- [ ] `docker compose up -d <services>` — not `restart`, and not Docker Desktop's Play
 - [ ] `occ upgrade` on each instance
 - [ ] Skim the changelog for the majors you support
 
@@ -790,7 +827,8 @@ Every instance installs with the same fixtures, which is what makes them disposa
 
 - [ ] Run the web updater or `updater.phar` against a bind-mounted git worktree
 - [ ] `docker compose down -v` unless you intend to wipe **every** instance's database,
-      config and data
+      config and data — and note plain `down` already resets the `stableNN` instances
+- [ ] Assume Docker Desktop's Play button picked up an image you just pulled — it did not
 - [ ] `occ` as root — it leaves root-owned files in your worktree
 - [ ] Trust `:latest` to be latest without pulling
 - [ ] Trust `git status` to tell you how far behind upstream you are
@@ -835,12 +873,30 @@ first time you try to update a stable worktree the obvious way.
 grepping for the database name finds nothing.
 
 **Stable instances keep config in anonymous volumes; the main one does not.** The
-asymmetry means `down -v` and `--renew-anon-volumes` have very different blast radii
-depending on which instance you had in mind. Nothing in the UI hints at it.
+asymmetry means `down`, `down -v` and `--renew-anon-volumes` have very different blast
+radii depending on which instance you had in mind. Nothing in the UI hints at it.
 
-**`docker compose restart` does not adopt a newly pulled image.** It restarts the
-existing container, still built on the old image. `up -d` recreates it. A "pulled but
-nothing changed" report is almost always this.
+**`-v` is not the only destructive flag — plain `down` resets the stable instances.** An
+earlier revision of this document stated that anonymous volumes "survive `down`", on the
+reasoning that `down` without `-v` does not delete volumes. True of the volume object,
+false of the data. Measured with a two-service throwaway project, one named volume and
+one anonymous, a marker file written into each:
+
+| | named volume | anonymous volume |
+| --- | --- | --- |
+| `stop` → `start` | marker intact | marker intact |
+| `down` → `up` | marker intact | **empty — new volume; old one orphaned with the data still in it** |
+
+A named volume is reattached by name. An anonymous volume is identified only by its
+attachment to a container, so removing the container severs the only reference and `up`
+creates a fresh empty one. Checking the flag's documentation rather than the outcome is
+how the wrong version got written down.
+
+**Nothing that reuses a container adopts a newly pulled image.** `restart`, `start` and
+Docker Desktop's Play button all resume the container you already had, still built on the
+old image, and report success. Only `up -d` recreates it. A "pulled but nothing changed"
+report is almost always this — and it is especially easy to hit when the environment is
+normally parked with Stop rather than brought down.
 
 **Redis is shared and it is fine.** No `dbindex`, no per-instance prefix in the config —
 Nextcloud namespaces keys by `instanceid` internally. Worth knowing before someone
