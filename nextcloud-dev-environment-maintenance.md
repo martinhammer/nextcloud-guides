@@ -516,6 +516,32 @@ cd ~/Code/nextcloud-docker-dev
 
 # --- SAFE WHILE RUNNING: nothing here touches a served file tree ---
 
+# 0. Backup. Seconds of work, and the only thing that makes this reversible.
+B=~/nc-backups/$(date +%F-%H%M); mkdir -p "$B"
+
+#    all instances share one MariaDB, so one dump covers the lot
+docker compose exec -T database-mysql \
+  mysqldump -uroot -pnextcloud --all-databases --single-transaction --quick \
+  > "$B/all-databases.sql"
+
+#    config volumes — config.php holds instanceid, secret and passwordsalt,
+#    which a restored database is worthless without
+for c in $(docker compose ps -q nextcloud stable34); do
+  N=$(docker inspect "$c" --format '{{index .Config.Labels "com.docker.compose.service"}}')
+  V=$(docker inspect "$c" --format \
+      '{{range .Mounts}}{{if eq .Destination "/var/www/html/config"}}{{.Name}}{{end}}{{end}}')
+  docker run --rm -v "$V":/src:ro alpine tar czf - -C /src . > "$B/$N-config.tgz"
+done
+
+#    the commits to roll back to, if it comes to that
+{ echo "harness $(git rev-parse HEAD)"
+  for d in workspace/*/; do
+    [ -e "$d/version.php" ] && echo "$(basename "$d") $(git -C "$d" rev-parse HEAD)"
+  done
+} > "$B/commits.txt"
+
+ls -lh "$B"
+
 # 1. Harness (rewrites docker-compose.yml; running containers are unaffected)
 git pull
 
@@ -554,6 +580,39 @@ docker compose exec -u www-data stable34 php occ maintenance:mode
 
 `occ upgrade` exits cleanly and does nothing when no migration is pending, so it is safe
 to run unconditionally. Step 7 needs `up -d`, not `restart` or Play.
+
+> **Stream volume backups through stdout, never a host bind mount.** The obvious form,
+> `docker run -v "$B":/dst alpine tar czf /dst/x.tgz …`, fails on Docker Desktop with
+> *"mounts denied: the path … is not shared from the host"* — the VM only exposes
+> directories on its file-sharing list. Redirecting the container's stdout into a host
+> file works everywhere, because no host path is ever mounted.
+
+### Restoring
+
+```bash
+B=~/nc-backups/<the-one-you-want>
+
+docker compose stop nextcloud stable34
+docker compose exec -T database-mysql mysql -uroot -pnextcloud < "$B/all-databases.sql"
+
+for c in $(docker compose ps -aq nextcloud stable34); do
+  N=$(docker inspect "$c" --format '{{index .Config.Labels "com.docker.compose.service"}}')
+  V=$(docker inspect "$c" --format \
+      '{{range .Mounts}}{{if eq .Destination "/var/www/html/config"}}{{.Name}}{{end}}{{end}}')
+  docker run --rm -i -v "$V":/dst alpine tar xzf - -C /dst < "$B/$N-config.tgz"
+done
+
+# put the code back where the config and schema expect it
+awk '$1=="server"   {print $2}' "$B/commits.txt" | xargs -I{} git -C workspace/server   checkout {}
+awk '$1=="stable34" {print $2}' "$B/commits.txt" | xargs -I{} git -C workspace/stable34 checkout {}
+
+docker compose up -d nextcloud stable34
+```
+
+Restore all three together — database, config and code. A database rolled back under
+newer code puts the instance straight back into an upgrade it has already done, and
+config.php without its matching database is just a file full of secrets for data that is
+no longer there.
 
 **Step 7 does not reset the stable instances.** This is the one case where recreating a
 container keeps its anonymous volumes: the old container still exists, so Compose
@@ -601,6 +660,9 @@ docker compose exec -u www-data nextcloud php occ maintenance:mode --off
 
 Twice a year, when a new major is released. Two independent jobs: **add a worktree for
 the version that just shipped**, and **let `master` move on**.
+
+**Take the step 0 backup from [4.1](#41-routine-after-each-monthly-patch-release) first.**
+A major migration is the one you are least likely to be able to undo by hand.
 
 **Steps 1–5 are safe with the environment running.** Adding a worktree only writes new
 files and new refs — it never touches a directory a container is already serving. Only
@@ -875,6 +937,7 @@ Every instance installs with the same fixtures, which is what makes them disposa
 
 **Monthly** — or whenever the schedule says a patch shipped:
 
+- [ ] **Backup first** — database dump, config volumes, and the commit SHAs
 - [ ] `git pull` in `nextcloud-docker-dev`
 - [ ] `make pull-installed`
 - [ ] **`docker compose stop nextcloud stableNN`** before touching any checkout
