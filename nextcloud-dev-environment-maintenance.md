@@ -504,36 +504,84 @@ disagreement, and it leaves app-update notifications working.
 Run this when the schedule says a patch shipped, or monthly regardless. Roughly ten
 minutes including container restarts.
 
+> **Stop the instance containers before pulling code.** The server code is a **live bind
+> mount**: `workspace/server` is what Apache is serving right now. Pulling a month of
+> commits underneath a running PHP process means requests can load a half-old,
+> half-new tree, and between the pull and `occ upgrade` the new code runs against the old
+> schema. Stop the two instance containers first — and leave the database, Redis, proxy
+> and mail running, because `occ upgrade` needs them.
+
 ```bash
 cd ~/Code/nextcloud-docker-dev
 
-# 1. Harness
+# --- SAFE WHILE RUNNING: nothing here touches a served file tree ---
+
+# 1. Harness (rewrites docker-compose.yml; running containers are unaffected)
 git pull
 
 # 2. Images (only those already present; `make pull-all` grabs everything)
 make pull-installed
 
-# 3. Server code — ONE PULL PER WORKTREE. See the refspec warning below.
+# --- QUIESCE: from here on, the code under the containers changes ---
+
+# 3. Park the instances. Shared services stay up.
+docker compose stop nextcloud stable34
+
+# 4. Server code — ONE PULL PER WORKTREE. See the refspec warning below.
 git -C workspace/server pull
 cd workspace/stable34 && git pull origin stable34 && cd -
 
-# 4. Submodules, in every worktree that moved
+# 5. Submodules, in every worktree that moved
 git -C workspace/server submodule update --init
 git -C workspace/stable34 submodule update --init
 
-# 5. Apps you track from upstream
+# 6. Apps you track from upstream
 for d in workspace/server/apps-extra/*/; do
   [ -e "$d/.git" ] && git -C "$d" pull
 done
 
-# 6. Recreate containers so the new images are used, then migrate
+# --- BACK UP: up -d adopts the new images; anonymous volumes are carried over ---
+
+# 7. Recreate containers against the new images, then migrate
 docker compose up -d nextcloud stable34
 docker compose exec -u www-data nextcloud php occ upgrade
 docker compose exec -u www-data stable34 php occ upgrade
+
+# 8. Confirm neither instance was left in maintenance mode
+docker compose exec -u www-data nextcloud php occ maintenance:mode
+docker compose exec -u www-data stable34 php occ maintenance:mode
 ```
 
 `occ upgrade` exits cleanly and does nothing when no migration is pending, so it is safe
-to run unconditionally. Step 6 needs `up -d`, not `restart`.
+to run unconditionally. Step 7 needs `up -d`, not `restart` or Play.
+
+**Step 7 does not reset the stable instances.** This is the one case where recreating a
+container keeps its anonymous volumes: the old container still exists, so Compose
+inspects it and reattaches them. That is why the runbook stops rather than brings the
+environment down — `down` removes the container and severs that link, which is what
+costs `stableNN` its config (see [1.7](#17-where-state-actually-lives)).
+
+If you would rather not stop the containers — a second person is using the box, or you
+want background jobs held off as well — Nextcloud's own mechanism substitutes for
+step 3, at the cost of leaving PHP running against a mutating tree:
+
+```bash
+docker compose exec -u www-data nextcloud php occ maintenance:mode --on
+docker compose exec -u www-data stable34 php occ maintenance:mode --on
+# ... steps 4–6 ...
+docker compose exec -u www-data nextcloud php occ maintenance:mode --off
+```
+
+> **⚠ Nextcloud dirties `.htaccess` in every worktree, and it is a tracked file.** The
+> installer appends its own `ErrorDocument` block below a `DO NOT CHANGE ANYTHING ABOVE
+> THIS LINE` marker, so `git status` shows `M .htaccess` permanently. Any pull whose
+> range touches that file aborts with *"Your local changes would be overwritten by
+> merge"* — mid-runbook, with the instance already stopped. Discard the local edit and
+> pull again; Nextcloud regenerates it on the next start:
+>
+> ```bash
+> git -C workspace/server checkout -- .htaccess && git -C workspace/server pull
+> ```
 
 > **⚠ The fetch refspec is narrowed to master.** `bootstrap.sh` configures the server
 > clone with `remote.origin.fetch = +refs/heads/master:refs/remotes/origin/master`, so a
@@ -554,8 +602,15 @@ to run unconditionally. Step 6 needs `up -d`, not `restart`.
 Twice a year, when a new major is released. Two independent jobs: **add a worktree for
 the version that just shipped**, and **let `master` move on**.
 
+**Steps 1–5 are safe with the environment running.** Adding a worktree only writes new
+files and new refs — it never touches a directory a container is already serving. Only
+step 6 pulls code out from under a live instance, so that is the only part that needs
+quiescing.
+
 ```bash
 cd ~/Code/nextcloud-docker-dev
+
+# --- SAFE WHILE RUNNING: steps 1–5 only add things ---
 
 # 1. The harness must know the new service exists. Upstream adds a `stableNN`
 #    service to docker-compose.yml and extends bootstrap.sh — you get it by pulling.
@@ -580,11 +635,20 @@ grep stable35 /etc/hosts
 # 5. Start it — one new container, joining the existing DB/Redis/proxy/mail
 docker compose up -d stable35                 # → http://stable35.local
 
+# --- QUIESCE: step 6 rewrites the tree the `nextcloud` container is serving ---
+
 # 6. Let master become the new dev major
+docker compose stop nextcloud
 git -C workspace/server pull                  # master is now NN+1 dev
+git -C workspace/server submodule update --init
 docker compose up -d nextcloud
 docker compose exec -u www-data nextcloud php occ upgrade
 ```
+
+Step 6 is a **major** version jump, so expect `occ upgrade` to do real work and take
+longer than a patch migration — and expect apps pinned below the new major to be
+disabled on the way through. That is the signal to review their `max-version`, not a
+fault.
 
 Step 6 is the one that gets skipped, and skipping it is what produces the stale-master
 symptom in the field notes. **Pulling master after a major release is not optional.**
@@ -595,14 +659,21 @@ not touch. A new `stableNN.local` resolves nowhere until `update-hosts` runs.
 The new instance creates its own database (`stable35`) on first start, from its
 `VIRTUAL_HOST`. Nothing to provision by hand.
 
-Retire the oldest worktree at the same time, once its major is EOL:
+Retire the oldest worktree at the same time, once its major is EOL. **Order matters:**
+remove the container before the directory, or you are deleting a tree that a running
+container still has bind-mounted.
 
 ```bash
+docker compose rm -sf stable32              # stop and remove the container FIRST
 git -C workspace/server worktree remove ../stable32
-docker compose rm -sf stable32
-docker volume prune       # reclaims its orphaned anonymous volumes
+docker volume prune                          # reclaims its orphaned anonymous volumes
 # the stable32 database lingers in MariaDB; drop it if you care about the clutter
 ```
+
+`worktree remove` refuses if the tree is dirty — and it always is, because of the
+`.htaccess` the installer rewrites. `git -C workspace/server worktree remove --force
+../stable32` is the right answer here; there is nothing in a retired dev instance worth
+keeping.
 
 ### 4.3 Shallow clones
 
@@ -806,10 +877,12 @@ Every instance installs with the same fixtures, which is what makes them disposa
 
 - [ ] `git pull` in `nextcloud-docker-dev`
 - [ ] `make pull-installed`
+- [ ] **`docker compose stop nextcloud stableNN`** before touching any checkout
 - [ ] `git pull` in **every** `workspace/*` worktree (name the branch for stable ones)
 - [ ] `git submodule update --init` in each worktree that moved
 - [ ] `docker compose up -d <services>` — not `restart`, and not Docker Desktop's Play
 - [ ] `occ upgrade` on each instance
+- [ ] `occ maintenance:mode` reports off on each instance
 - [ ] Skim the changelog for the majors you support
 
 **At every major release** — twice a year, non-negotiable:
@@ -830,6 +903,8 @@ Every instance installs with the same fixtures, which is what makes them disposa
       config and data — and note plain `down` already resets the `stableNN` instances
 - [ ] Assume Docker Desktop's Play button picked up an image you just pulled — it did not
 - [ ] `occ` as root — it leaves root-owned files in your worktree
+- [ ] `git pull` a worktree while its container is serving it
+- [ ] Delete a worktree directory before removing the container bind-mounting it
 - [ ] Trust `:latest` to be latest without pulling
 - [ ] Trust `git status` to tell you how far behind upstream you are
 
@@ -891,6 +966,22 @@ A named volume is reattached by name. An anonymous volume is identified only by 
 attachment to a container, so removing the container severs the only reference and `up`
 creates a fresh empty one. Checking the flag's documentation rather than the outcome is
 how the wrong version got written down.
+
+**`up -d` recreate keeps anonymous volumes; `down` then `up` does not.** These look like
+the same operation and are not. Measured on the same throwaway project: change a service
+definition and `up -d`, and the rebuilt container comes back attached to the *same*
+anonymous volume, marker file intact — Compose inspects the old container, which still
+exists, and carries the mount across. Do `down` first and that container is gone, so
+there is nothing to inspect and `up` mints an empty one. This is why the runbook stops
+containers rather than bringing them down: it is the difference between a stable instance
+keeping its config and silently re-installing.
+
+**The code is a live bind mount, so pulling under a running instance is not safe.**
+`workspace/server` is what Apache is serving as the pull rewrites it — requests during
+that window can load a half-updated tree, and after it the new code runs against an
+un-migrated schema until `occ upgrade`. On a single-user dev box the failure is usually
+just a confusing 500; it is still cheaper to stop two containers first. Stopping the
+instance containers only — not the database — keeps `occ upgrade` able to run.
 
 **Nothing that reuses a container adopts a newly pulled image.** `restart`, `start` and
 Docker Desktop's Play button all resume the container you already had, still built on the
