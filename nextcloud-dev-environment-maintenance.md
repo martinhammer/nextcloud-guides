@@ -511,6 +511,14 @@ minutes including container restarts.
 > schema. Stop the two instance containers first — and leave the database, Redis, proxy
 > and mail running, because `occ upgrade` needs them.
 
+> **⚠ This routine turns into a major rollover without telling you.** `master` changes
+> identity at every release, so `git -C workspace/server pull` is a patch-sized move only
+> while your checkout and upstream share a major. Let a release go by and the exact same
+> command jumps a major version, running a full schema migration and disabling every app
+> pinned below it. Step 2a checks. If the majors differ, leave `workspace/server` alone
+> here and handle it through [4.2](#42-rollover-adding-a-new-major-version) — the stable
+> worktrees can still be updated by this runbook in the meantime.
+
 ```bash
 cd ~/Code/nextcloud-docker-dev
 
@@ -546,11 +554,22 @@ ls -lh "$B"
 git pull
 
 # 2. Images (only those already present; `make pull-all` grabs everything)
+#    NB: this matches `nextcloud/nextcloud-dev` only — mariadb and redis are
+#    deliberately left alone, so a database major never moves by accident.
 make pull-installed
+
+# --- CHECK: is this still a routine update? ---
+
+# 2a. If the majors differ, pulling master is a MAJOR rollover, not a patch.
+#     Stop here and use 4.2 for the `server` worktree instead.
+echo -n "local  master major: "; grep -oE 'OC_Version = \[[0-9]+' workspace/server/version.php | grep -oE '[0-9]+$'
+echo -n "remote master major: "; gh api repos/nextcloud/server/contents/version.php?ref=master \
+  --jq '.content' | base64 -d | grep -oE 'OC_Version = \[[0-9]+' | grep -oE '[0-9]+$'
 
 # --- QUIESCE: from here on, the code under the containers changes ---
 
 # 3. Park the instances. Shared services stay up.
+#    Only stop what you are actually updating.
 docker compose stop nextcloud stable34
 
 # 4. Server code — ONE PULL PER WORKTREE. See the refspec warning below.
@@ -620,6 +639,20 @@ inspects it and reattaches them. That is why the runbook stops rather than bring
 environment down — `down` removes the container and severs that link, which is what
 costs `stableNN` its config (see [1.7](#17-where-state-actually-lives)).
 
+> **⚠ `up -d <service>` also recreates that service's dependencies.** Naming one instance
+> does not scope the blast radius to it. Compose walks the `depends_on` graph and rebuilds
+> anything whose image or definition has changed — so `docker compose up -d stable34`,
+> run right after `make pull-installed`, also replaces the **shared `proxy` and `mail`
+> containers**. The proxy owns hostname routing for *every* instance, so updating one
+> version briefly drops `nextcloud.local` too. Harmless on a dev box, bewildering if you
+> are mid-request on the instance you thought you were leaving alone. Services outside
+> that graph are genuinely untouched: `nextcloud` kept running throughout, still on its
+> old image.
+>
+> The corollary: **updating one instance leaves the others on stale images.** After a
+> single-instance run the environment is deliberately mixed — `stable34` on the new
+> image, `nextcloud` on the one it started with — until you `up -d` the rest.
+
 If you would rather not stop the containers — a second person is using the box, or you
 want background jobs held off as well — Nextcloud's own mechanism substitutes for
 step 3, at the cost of leaving PHP running against a mutating tree:
@@ -685,8 +718,10 @@ git fetch origin stable35:stable35            # safe: not yet checked out anywhe
 git worktree add ../stable35 stable35
 git -C ../stable35 submodule update --init
 
-# 3. Worktrees for each app that has a matching stable branch
+# 3. Worktrees for each app that has a matching stable branch.
+#    FETCH FIRST — the app clone has not seen the new branch yet.
 cd apps-extra/viewer
+git fetch origin
 git worktree add ../../../stable35/apps-extra/viewer stable35
 
 # 4. DNS for the new hostname — it is NOT added by `git pull`
@@ -706,6 +741,19 @@ git -C workspace/server submodule update --init
 docker compose up -d nextcloud
 docker compose exec -u www-data nextcloud php occ upgrade
 ```
+
+> **The app clones need an explicit `git fetch` before step 3, the server clone does
+> not.** They fail in opposite directions and for opposite reasons. `bootstrap.sh`
+> narrows the *server* clone to `+refs/heads/master:…`, so its stable branches only ever
+> arrive through the explicit refspec in step 2 — which fetches on the spot. The *app*
+> clones keep the normal `+refs/heads/*:…`, so they would see `stable35` automatically —
+> but only if something has fetched since the branch was cut, and nothing does that on a
+> schedule. Result: `git worktree add … stable35` dies with `invalid reference:
+> stable35` on a repo whose config looks perfectly correct. Check before you trust it:
+>
+> ```bash
+> git -C workspace/server/apps-extra/viewer rev-parse --verify origin/stable35
+> ```
 
 Step 6 is a **major** version jump, so expect `occ upgrade` to do real work and take
 longer than a patch migration — and expect apps pinned below the new major to be
@@ -890,36 +938,48 @@ but the syntax must also parse on the highest. Testing only on `nextcloud.local`
 for. Override per-run with `PHP_VERSION=84 docker compose up -d nextcloud` rather than
 editing `.env`, which moves every service at once.
 
-### 5.5 Keep one copy of your app, mounted many times
+### 5.5 Where to put an app that spans several majors
 
-An app checked out once and exposed to several majors via **git worktrees** has one
-history and one source of truth. An app that exists as two independently-edited copies
-under `workspace/server/apps-extra/` and `workspace/stable34/apps-extra/` has neither:
-the copies diverge, and nothing tells you when.
+The environment offers two mount points, and the choice is about how many places your
+app has to arrive in — not about how you build it.
+
+| Mount | Set by | Scope | Use when |
+| --- | --- | --- | --- |
+| `/var/www/html/apps-extra` | `<worktree>/apps-extra/<app>` | **One instance** | The app needs a different tree per major |
+| `/var/www/html/apps-shared` | `ADDITIONAL_APPS_PATH` in `.env` | **Every instance** | One tree serves every major you target |
+
+Per-instance is the bootstrap default, and it is per-instance *work*: an app placed there
+has to be placed there again for every major you add, and the count grows every four
+months. If a single build satisfies your whole `min`–`max` range, the shared mount is one
+directory that `nextcloud`, `stable34`, `stable35` and everything after them all see.
 
 ```bash
-# is this app a real checkout, or a loose copy?
-for d in workspace/server/apps-extra/*/; do
-  printf '%-48s %s\n' "$d" \
-    "$([ -e "$d/.git" ] && git -C "$d" branch --show-current || echo '⚠ NOT A GIT CHECKOUT')"
-done
-
-# do the two trees actually agree?
-diff -rq --exclude=.git \
-  workspace/server/apps-extra/myapp \
-  workspace/stable34/apps-extra/myapp
+# in .env — one directory, mounted into every instance
+ADDITIONAL_APPS_PATH=/home/alice/Code/nextcloud-apps
 ```
 
-For an app that supports several majors from one branch, stop duplicating it: put it once
-in `ADDITIONAL_APPS_PATH` (set in `.env`) and every container mounts it at
-`/var/www/html/apps-shared`. One directory, all instances, no divergence to detect.
+> **Point it outside the `nextcloud-docker-dev` clone.** The default,
+> `./data/apps-extra`, sits inside the repo and is **not** covered by its `.gitignore`,
+> so anything you put there shows up as untracked in the harness repo and can be
+> committed into it by accident. (Upstream is aware — there is a `fix/noid/ignore-data-extra`
+> branch.) A path outside the clone avoids the question entirely and survives
+> `git pull`.
 
-For an app with real per-major branches, use worktrees, exactly as the server does:
+If the app genuinely needs per-major trees, use worktrees for it exactly as the server
+does, and accept one per instance:
 
 ```bash
 cd workspace/server/apps-extra/myapp
+git fetch origin                                    # see the 4.2 note — it is not automatic
 git worktree add ../../../stable34/apps-extra/myapp stable34
 ```
+
+**Whatever is under those mounts is a deployment, not your source.** The environment
+neither builds it nor tracks it, and nothing warns you when a deployed tree falls behind
+the repository it came from — the instance simply keeps serving what is on disk.
+Re-stage from your own source after every change you expect to see, and treat a
+`diff` between a deployed tree and its repository as expected noise rather than as
+evidence of anything.
 
 ### 5.6 Useful defaults
 
@@ -977,6 +1037,14 @@ Every instance installs with the same fixtures, which is what makes them disposa
 
 Findings from this environment. Add to it rather than rediscovering.
 
+**The routine runbook silently becomes the major one.** Found on a live test drive: an
+environment a few months stale, where step 4's ordinary `git -C workspace/server pull`
+would have crossed 35 → 36 — a full major migration, with every app pinned to
+`max-version="35"` disabled on the way through — while looking exactly like the monthly
+patch it was filed under. The stable worktrees were genuinely routine at the same moment,
+so nothing about the run felt unusual. Hence step 2a. The same pull is a patch or a major
+depending only on how long it has been since you last ran it.
+
 **A stale `master` checkout changes identity without telling you — and then reports an
 update to itself.** Observed: an instance displaying `Nextcloud Hub 26 Spring
 (35.0.0 dev)` and, in the same viewport, a toast reading *"Nextcloud 35.0.0 is
@@ -1031,13 +1099,22 @@ creates a fresh empty one. Checking the flag's documentation rather than the out
 how the wrong version got written down.
 
 **`up -d` recreate keeps anonymous volumes; `down` then `up` does not.** These look like
-the same operation and are not. Measured on the same throwaway project: change a service
-definition and `up -d`, and the rebuilt container comes back attached to the *same*
-anonymous volume, marker file intact — Compose inspects the old container, which still
-exists, and carries the mount across. Do `down` first and that container is gone, so
-there is nothing to inspect and `up` mints an empty one. This is why the runbook stops
-containers rather than bringing them down: it is the difference between a stable instance
-keeping its config and silently re-installing.
+the same operation and are not. Compose inspects the *old* container — which after a
+`stop` still exists — and carries its anonymous mounts onto the replacement. Do `down`
+first and that container is gone, so there is nothing to inspect and `up` mints an empty
+one. This is why the runbook stops containers rather than bringing them down: it is the
+difference between a stable instance keeping its config and silently re-installing.
+
+Confirmed on a live `stable34` instance during a real patch update, not just a
+synthetic test. The container was replaced (`c91eace1ccd5` → `a91e2f22557f`) and picked
+up the newly pulled image (`34a7ad0a7b4e` → `fa6d221177cd`), while all three anonymous
+volumes came across unchanged:
+
+```
+/var/www/html/data          = 80edbb57713590f0…   (identical before and after)
+/var/www/html/config        = d227c1c147cb544b…   (identical before and after)
+/var/www/html/apps-writable = dfc5ef1654b97617…   (identical before and after)
+```
 
 **The code is a live bind mount, so pulling under a running instance is not safe.**
 `workspace/server` is what Apache is serving as the pull rewrites it — requests during
@@ -1058,14 +1135,34 @@ Nextcloud namespaces keys by `instanceid` internally. Worth knowing before someo
 because the key prefix folds in the installed-app set, toggling an app silently
 invalidates that instance's entire cache.
 
+**Updating one instance bounces the shared proxy.** `up -d stable34` rebuilt `proxy` and
+`mail` alongside it, because they are in its `depends_on` graph and their images had just
+been pulled. Since the proxy routes every hostname, the instance you were not updating
+loses routing for a second or two. Nothing in the command suggests it touches anything
+but `stable34`, and the output scrolls past as two more `Started` lines.
+
+**`volume "master_mysql" already exists but was not created by Docker Compose`** appears
+on every `up` and is cosmetic. Those volumes carry no Compose labels — they predate the
+labelling that Compose v2 uses to recognise its own — so it warns rather than adopting
+them silently. The data is fine and the warning needs no action.
+
 **A new `stableNN.local` will not resolve after `git pull`.** Hostnames live in
 `/etc/hosts` via `./scripts/update-hosts`, which no other step calls. The symptom is a
 browser DNS error with a perfectly healthy container behind it.
 
-**Two copies of an app are not a branching strategy.** Duplicated app directories across
-`server/apps-extra` and `stableNN/apps-extra` look identical the day they are made and
-drift from then on, with no signal. Either one shared copy via `ADDITIONAL_APPS_PATH`, or
-real worktrees — not both trees edited by hand.
+**A deployed app tree tells you nothing about its source.** Diffing one against the
+repository it came from looks like it should reveal drift, and does not: the same
+comparison turns up files that are merely rebuilt, files that are stale because a
+deployment was never refreshed, and files that differ only because a dependency was
+installed at different times on either side. Reading intent into any of it is guesswork.
+The environment's job stops at mounting the directory; whether its contents are current
+is answered by re-staging, not by inspection.
+
+**Per-instance app mounts cost one placement per major, forever.** `apps-extra` is the
+bootstrap default and it is easy not to notice that it scales with the number of stable
+worktrees you keep. `ADDITIONAL_APPS_PATH` is the same idea with the multiplication
+removed, and it is already wired into every service in the compose file — it just
+defaults to an empty directory, so nothing draws attention to it.
 
 ---
 
