@@ -108,7 +108,7 @@ DBNAME=$(echo "$VIRTUAL_HOST" | cut -d '.' -f1)     # docker/bin/bootstrap.sh
 So `VIRTUAL_HOST=stable34.local` → database `stable34`. Everything connects as
 `root`/`nextcloud` to host `database-mysql`.
 
-Three consequences worth holding:
+Four consequences worth holding:
 
 - **Instances are isolated at the schema level, not the server level.** A migration that
   goes wrong on `stable34` cannot corrupt `nextcloud`, but one `mysqldump --all-databases`
@@ -119,6 +119,27 @@ Three consequences worth holding:
 - **A reinstall does not drop the old database.** Databases from majors you have since
   retired sit there indefinitely. Harmless, but they are why `SHOW DATABASES` accumulates
   names you no longer recognise.
+- **Shared app code does not mean shared schema.** One directory on
+  `ADDITIONAL_APPS_PATH` gives every instance the same files, but each instance still
+  runs that app's migrations against *its own* database, at whatever moment the app was
+  first enabled there. Two instances can therefore hold different column types for the
+  same app while serving byte-identical code — see the field note on migration drift.
+
+That last point is the one that catches people, because the symptom looks like an app
+bug and is actually an artefact of when each database was created:
+
+```bash
+# same column, every instance, side by side
+docker compose exec -T database-mysql mysql -uroot -pnextcloud -e \
+  "SELECT TABLE_SCHEMA, COLUMN_TYPE, IS_NULLABLE, COLUMN_DEFAULT
+     FROM information_schema.COLUMNS
+    WHERE TABLE_NAME='oc_<app>_<table>' AND COLUMN_NAME='<column>';"
+
+# and what each instance thinks is wrong with its own schema
+for s in nextcloud stable34 stable35; do
+  echo "--- $s"; docker compose exec -T -u www-data $s php occ db:schema:check
+done
+```
 
 Useful entry points:
 
@@ -387,14 +408,31 @@ A checkout of master is only meaningful together with its date.
 
 ### 3.2 The cadence
 
-Nextcloud ships **a major every ~4 months**, supported for **12 months** with **monthly
-maintenance releases**.
+Nextcloud now ships **roughly a major per quarter**, each supported for **12 months**
+with **monthly maintenance releases**. Do not treat the interval as fixed — it has
+shortened steadily, and the guidance below depends on which end of that trend you are on.
+Measured from the GA tags:
 
-| Major | Released | EOL | Notes |
-| --- | --- | --- | --- |
-| 34 | 9 Jun 2026 | 8 Jun 2027 | Hub 26 Spring |
-| 35 | 16 Sep 2026 | 15 Sep 2027 | Hub 26 Summer |
-| 36 | TBA | TBA | Hub 27 Winter; currently `master` |
+| Major | GA | Gap from previous |
+| --- | --- | --- |
+| 30 | 2024-09-25 | — |
+| 31 | 2025-02-25 | 153 d (5.0 mo) |
+| 32 | 2025-09-27 | 214 d (7.0 mo) |
+| 33 | 2026-02-18 | 144 d (4.7 mo) |
+| 34 | 2026-06-08 | 110 d (3.6 mo) |
+| 35 | 2026-09-15 | **99 d (3.3 mo)** |
+| 36 | TBA | currently `master` |
+
+Two majors a year was right for 2025; 2026 has already had three (Feb, Jun, Sep) and is
+on track for four. Recompute rather than assume:
+
+```bash
+for t in v33.0.0 v34.0.0 v35.0.0 v36.0.0; do
+  printf '%-9s %s\n' "$t" "$(gh api repos/nextcloud/server/releases/tags/$t --jq .published_at 2>/dev/null | cut -c1-10)"
+done
+```
+
+EOL is 12 months after GA — so 34 runs out on 2027-06-08 and 35 on 2027-09-15.
 
 Authoritative sources — check these, do not rely on the table above:
 
@@ -408,9 +446,11 @@ Authoritative sources — check these, do not rely on the table above:
     | grep -E '^v3[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -5
   ```
 
-Because majors land every four months and live twelve, **three majors are supported at
-any time**. An app declaring support for the current release will be expected to work on
-two older ones.
+Support windows overlap by twelve months divided by the release interval, so **the number
+of concurrently supported majors rises as the cadence shortens** — three at a four-month
+interval, four at three months. At the current rate an app declaring support for the
+latest release is expected to work on roughly three older ones, and that count is a
+moving target rather than a fixed property of the project.
 
 ### 3.3 The version tuple — four components, and the fourth is the one that bites
 
@@ -592,13 +632,31 @@ docker compose up -d nextcloud stable34
 docker compose exec -u www-data nextcloud php occ upgrade
 docker compose exec -u www-data stable34 php occ upgrade
 
-# 8. Confirm neither instance was left in maintenance mode
+# 8. Reconcile schema drift that `occ upgrade` reports but does not fix
+docker compose exec -u www-data nextcloud php occ db:add-missing-indices
+docker compose exec -u www-data nextcloud php occ db:add-missing-columns
+docker compose exec -u www-data nextcloud php occ db:add-missing-primary-keys
+docker compose exec -u www-data nextcloud php occ db:schema:check
+
+# 9. Confirm neither instance was left in maintenance mode
 docker compose exec -u www-data nextcloud php occ maintenance:mode
 docker compose exec -u www-data stable34 php occ maintenance:mode
 ```
 
+> **`occ upgrade` exits 0 with an incomplete schema.** It ends by printing what is still
+> missing — *"The database schema does not match what is expected for the installed
+> version"* — and then stops, leaving the indices uncreated. Nothing fails; the instance
+> simply runs without them until something is slow enough to investigate. Observed on a
+> 35 → 36 migration, which finished successfully and still wanted two indices on
+> `oc_taskprocessing_tasks`. Step 8 is cheap on a dev-sized database and idempotent, so
+> run it every time rather than only when the warning appears.
+>
+> `db:schema:check` also reports drift in **disabled** apps, without failing. Those lines
+> are informational: a disabled app's migrations are applied when it is re-enabled.
+
 `occ upgrade` exits cleanly and does nothing when no migration is pending, so it is safe
-to run unconditionally. Step 7 needs `up -d`, not `restart` or Play.
+to run unconditionally — but see step 8: a clean exit does not mean a complete schema.
+Step 7 needs `up -d`, not `restart` or Play.
 
 > **Stream volume backups through stdout, never a host bind mount.** The obvious form,
 > `docker run -v "$B":/dst alpine tar czf /dst/x.tgz …`, fails on Docker Desktop with
@@ -691,8 +749,9 @@ docker compose exec -u www-data nextcloud php occ maintenance:mode --off
 
 ### 4.2 Rollover: adding a new major version
 
-Twice a year, when a new major is released. Two independent jobs: **add a worktree for
-the version that just shipped**, and **let `master` move on**.
+Roughly quarterly, whenever a new major is released — see the cadence table in
+[3.2](#32-the-cadence), and expect it more often than you think. Two independent jobs:
+**add a worktree for the version that just shipped**, and **let `master` move on**.
 
 **Take the step 0 backup from [4.1](#41-routine-after-each-monthly-patch-release) first.**
 A major migration is the one you are least likely to be able to undo by hand.
@@ -757,8 +816,25 @@ docker compose exec -u www-data nextcloud php occ upgrade
 
 Step 6 is a **major** version jump, so expect `occ upgrade` to do real work and take
 longer than a patch migration — and expect apps pinned below the new major to be
-disabled on the way through. That is the signal to review their `max-version`, not a
-fault.
+disabled on the way through, announced one line each as `Disabled incompatible app: …`.
+That is the signal to review their `max-version`, not a fault. Finish with step 8 of
+[4.1](#41-routine-after-each-monthly-patch-release); a major migration is where the
+schema gaps it repairs actually show up.
+
+**Pull the tracked apps in the same window.** Bundled and companion apps move their
+`min-version` to the new major as soon as it opens, so upstream `master` of `viewer`,
+`profiler`, `circles` and friends will already be `min-version="36" max-version="36"`
+while your checkouts still say 35. Leave them behind and the instance lands on 36 with
+its apps incompatible in the *other* direction:
+
+```bash
+for d in workspace/server/apps-extra/*/; do
+  [ -e "$d/.git" ] && { printf '%-20s ' "$(basename "$d")"; git -C "$d" pull --ff-only; }
+done
+```
+
+Those pulls are safe precisely because `apps-extra` is per-instance: a `min-version="36"`
+app in the master worktree is invisible to `stableNN`, which mounts its own.
 
 Step 6 is the one that gets skipped, and skipping it is what produces the stale-master
 symptom in the field notes. **Pulling master after a major release is not optional.**
@@ -1005,10 +1081,11 @@ Every instance installs with the same fixtures, which is what makes them disposa
 - [ ] `git submodule update --init` in each worktree that moved
 - [ ] `docker compose up -d <services>` — not `restart`, and not Docker Desktop's Play
 - [ ] `occ upgrade` on each instance
+- [ ] `occ db:add-missing-indices` / `-columns` / `-primary-keys`, then `db:schema:check`
 - [ ] `occ maintenance:mode` reports off on each instance
 - [ ] Skim the changelog for the majors you support
 
-**At every major release** — twice a year, non-negotiable:
+**At every major release** — roughly quarterly, non-negotiable:
 
 - [ ] `git pull` the harness first; confirm the new `stableNN` service exists in
       `docker-compose.yml`
@@ -1046,9 +1123,8 @@ so nothing about the run felt unusual. Hence step 2a. The same pull is a patch o
 depending only on how long it has been since you last ran it.
 
 **A stale `master` checkout changes identity without telling you — and then reports an
-update to itself.** Observed: an instance displaying `Nextcloud Hub 26 Spring
-(35.0.0 dev)` and, in the same viewport, a toast reading *"Nextcloud 35.0.0 is
-available."* Both were correct. `workspace/server` had been checked out from master in
+update to itself.** Observed: an instance displaying `35.0.0 dev` and, in the same
+viewport, a toast reading *"Nextcloud 35.0.0 is available."* Both were correct. `workspace/server` had been checked out from master in
 early July, when master was still 35-in-development at build `35.0.0.1`. Upstream then
 cut `stable35`, released 35.0.0 as build `35.0.0.10`, and moved master on to `36.0.0
 dev`. The instance compared `35.0.0.1 < 35.0.0.10` and offered the upgrade. The cached
@@ -1128,6 +1204,33 @@ Docker Desktop's Play button all resume the container you already had, still bui
 old image, and report success. Only `up -d` recreates it. A "pulled but nothing changed"
 report is almost always this — and it is especially easy to hit when the environment is
 normally parked with Stop rather than brought down.
+
+**Migration drift: identical app code, different schemas, one instance flagged.**
+`db:schema:check` on the 36 instance reported `oc_tickbuddy_tracks: column 'private'
+differs in: type`, while the same app on 34 and 35 came back clean — with all three
+serving the *same files* from the shared apps path. The live types:
+
+| Instance | column |
+| --- | --- |
+| `nextcloud` (36) | `tinyint(1)` ⚠ |
+| `stable34` | `int(11)` |
+| `stable35` | `int(11)` |
+
+The cause was a migration edited after it had already run somewhere. Its history went
+`Types::BOOLEAN` → `Types::INTEGER`; the oldest database ran the `BOOLEAN` version and
+stored `tinyint(1)`, the two created later ran the `INTEGER` version and stored
+`int(11)`. Because the migration body is wrapped in `if (!$table->hasColumn(...))`, it is
+a no-op wherever the column already exists — so the old database is never corrected, by
+re-running migrations, by re-enabling the app, or by a major upgrade. Only a **new**
+migration that alters the column changes it.
+
+Two things follow for anyone running this environment. **A schema warning that names one
+instance is usually about that database's age, not about the app** — check the same
+column on the other instances before reporting it upstream. And **the oldest database is
+the least representative**: fresh instances get whatever the migrations say today, so a
+bug that only reproduces on your long-lived instance may be a historical artefact rather
+than something a user will ever hit. Re-installing an instance is a legitimate
+diagnostic step, which is another reason to keep the stable ones disposable.
 
 **Redis is shared and it is fine.** No `dbindex`, no per-instance prefix in the config —
 Nextcloud namespaces keys by `instanceid` internally. Worth knowing before someone
