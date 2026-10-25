@@ -548,7 +548,7 @@ minutes including container restarts.
 > mount**: `workspace/server` is what Apache is serving right now. Pulling a month of
 > commits underneath a running PHP process means requests can load a half-old,
 > half-new tree, and between the pull and `occ upgrade` the new code runs against the old
-> schema. Stop the two instance containers first — and leave the database, Redis, proxy
+> schema. Stop the instance containers first — and leave the database, Redis, proxy
 > and mail running, because `occ upgrade` needs them.
 
 > **⚠ This routine turns into a major rollover without telling you.** `master` changes
@@ -562,6 +562,11 @@ minutes including container restarts.
 ```bash
 cd ~/Code/nextcloud-docker-dev
 
+# Every instance you run. Everything below loops over these, so a new
+# stableNN is one edit here rather than one per step.
+STABLES="stable34 stable35"
+I="nextcloud $STABLES"
+
 # --- SAFE WHILE RUNNING: nothing here touches a served file tree ---
 
 # 0. Backup. Seconds of work, and the only thing that makes this reversible.
@@ -574,7 +579,7 @@ docker compose exec -T database-mysql \
 
 #    config volumes — config.php holds instanceid, secret and passwordsalt,
 #    which a restored database is worthless without
-for c in $(docker compose ps -q nextcloud stable34); do
+for c in $(docker compose ps -q $I); do
   N=$(docker inspect "$c" --format '{{index .Config.Labels "com.docker.compose.service"}}')
   V=$(docker inspect "$c" --format \
       '{{range .Mounts}}{{if eq .Destination "/var/www/html/config"}}{{.Name}}{{end}}{{end}}')
@@ -610,38 +615,62 @@ echo -n "remote master major: "; gh api repos/nextcloud/server/contents/version.
 
 # 3. Park the instances. Shared services stay up.
 #    Only stop what you are actually updating.
-docker compose stop nextcloud stable34
+docker compose stop $I
 
-# 4. Server code — ONE PULL PER WORKTREE. See the refspec warning below.
-git -C workspace/server pull
-cd workspace/stable34 && git pull origin stable34 && cd -
+# 4. Server code — ONE PULL PER WORKTREE. Discard the installer's .htaccess
+#    edit first (see below), or the pull can abort halfway. --ff-only refuses
+#    anything but a clean fast-forward. Stable worktrees must name the branch —
+#    see the refspec warning below.
+git -C workspace/server checkout -- .htaccess
+git -C workspace/server pull --ff-only
+for s in $STABLES; do
+  git -C workspace/$s checkout -- .htaccess
+  git -C workspace/$s pull --ff-only origin $s
+done
 
-# 5. Submodules, in every worktree that moved
-git -C workspace/server submodule update --init
-git -C workspace/stable34 submodule update --init
+# 5. Submodules, in every worktree that moved. Until this runs, `git status`
+#    shows `M 3rdparty` and PHP loads the old vendor libraries.
+for w in server $STABLES; do git -C workspace/$w submodule update --init; done
 
-# 6. Apps you track from upstream
-for d in workspace/server/apps-extra/*/; do
-  [ -e "$d/.git" ] && git -C "$d" pull
+# 6. Apps you track from upstream — including app worktrees under stableNN/,
+#    which a loop over workspace/server/apps-extra alone would miss
+for d in workspace/*/apps-extra/*/; do
+  [ -e "$d/.git" ] && { printf '%-46s ' "$d"; git -C "$d" pull --ff-only 2>&1 | tail -1; }
 done
 
 # --- BACK UP: up -d adopts the new images; anonymous volumes are carried over ---
 
-# 7. Recreate containers against the new images, then migrate
-docker compose up -d nextcloud stable34
-docker compose exec -u www-data nextcloud php occ upgrade
-docker compose exec -u www-data stable34 php occ upgrade
+# 7. Recreate containers against the new images, then migrate.
+#    Give Apache a few seconds to come up before the first occ.
+docker compose up -d $I
+for s in $I; do echo "== $s"; docker compose exec -T -u www-data $s php occ upgrade; done
 
-# 8. Reconcile schema drift that `occ upgrade` reports but does not fix
-docker compose exec -u www-data nextcloud php occ db:add-missing-indices
-docker compose exec -u www-data nextcloud php occ db:add-missing-columns
-docker compose exec -u www-data nextcloud php occ db:add-missing-primary-keys
-docker compose exec -u www-data nextcloud php occ db:schema:check
+# 8. Reconcile schema drift that `occ upgrade` reports but does not fix.
+#    db:schema:check only exists from 35 on — see below.
+for s in $I; do
+  echo "== $s"
+  for c in db:add-missing-indices db:add-missing-columns db:add-missing-primary-keys db:schema:check; do
+    docker compose exec -T -u www-data $s php occ $c
+  done
+done
 
-# 9. Confirm neither instance was left in maintenance mode
-docker compose exec -u www-data nextcloud php occ maintenance:mode
-docker compose exec -u www-data stable34 php occ maintenance:mode
+# 9. Confirm no instance was left in maintenance mode
+for s in $I; do docker compose exec -T -u www-data $s php occ maintenance:mode; done
 ```
+
+> **An app pull that fails in step 6 is usually upstream reorganising, not your
+> checkout.** *"Your configuration specifies to merge with the ref 'refs/heads/master'
+> from the remote, but no such ref was fetched"* means the branch you track is gone,
+> either renamed or retired. Ask the remote what its default branch is now, and read that
+> branch's README **before** re-pointing anything:
+>
+> ```bash
+> git -C workspace/server/apps-extra/<app> ls-remote --symref origin HEAD
+> ```
+>
+> If it is a plain rename, `git branch -m master main && git branch -u origin/main`.
+> If the new branch shares no history with the old one, it is not a rename. See the
+> field note on `viewer`.
 
 > **`occ upgrade` exits 0 with an incomplete schema.** It ends by printing what is still
 > missing — *"The database schema does not match what is expected for the installed
@@ -653,6 +682,12 @@ docker compose exec -u www-data stable34 php occ maintenance:mode
 >
 > `db:schema:check` also reports drift in **disabled** apps, without failing. Those lines
 > are informational: a disabled app's migrations are applied when it is re-enabled.
+
+> **`db:schema:check` is new in 35.** On a 34 instance step 8 ends with *Command
+> "db:schema:check" is not defined*, and `occ upgrade` there prints no schema summary
+> either. A 34 instance therefore has no way to tell you about a missing **table**, the
+> one gap the `add-missing-*` commands never fill. When a newer instance reports one,
+> assume the 34 instance has it too and check the database directly.
 
 `occ upgrade` exits cleanly and does nothing when no migration is pending, so it is safe
 to run unconditionally — but see step 8: a clean exit does not mean a complete schema.
@@ -668,11 +703,13 @@ Step 7 needs `up -d`, not `restart` or Play.
 
 ```bash
 B=~/nc-backups/<the-one-you-want>
+STABLES="stable34 stable35"
+I="nextcloud $STABLES"
 
-docker compose stop nextcloud stable34
+docker compose stop $I
 docker compose exec -T database-mysql mysql -uroot -pnextcloud < "$B/all-databases.sql"
 
-for c in $(docker compose ps -aq nextcloud stable34); do
+for c in $(docker compose ps -aq $I); do
   N=$(docker inspect "$c" --format '{{index .Config.Labels "com.docker.compose.service"}}')
   V=$(docker inspect "$c" --format \
       '{{range .Mounts}}{{if eq .Destination "/var/www/html/config"}}{{.Name}}{{end}}{{end}}')
@@ -680,10 +717,11 @@ for c in $(docker compose ps -aq nextcloud stable34); do
 done
 
 # put the code back where the config and schema expect it
-awk '$1=="server"   {print $2}' "$B/commits.txt" | xargs -I{} git -C workspace/server   checkout {}
-awk '$1=="stable34" {print $2}' "$B/commits.txt" | xargs -I{} git -C workspace/stable34 checkout {}
+for w in server $STABLES; do
+  awk -v w="$w" '$1==w {print $2}' "$B/commits.txt" | xargs -I{} git -C workspace/$w checkout {}
+done
 
-docker compose up -d nextcloud stable34
+docker compose up -d $I
 ```
 
 Restore all three together — database, config and code. A database rolled back under
@@ -716,29 +754,25 @@ want background jobs held off as well — Nextcloud's own mechanism substitutes 
 step 3, at the cost of leaving PHP running against a mutating tree:
 
 ```bash
-docker compose exec -u www-data nextcloud php occ maintenance:mode --on
-docker compose exec -u www-data stable34 php occ maintenance:mode --on
+for s in $I; do docker compose exec -T -u www-data $s php occ maintenance:mode --on; done
 # ... steps 4–6 ...
-docker compose exec -u www-data nextcloud php occ maintenance:mode --off
+for s in $I; do docker compose exec -T -u www-data $s php occ maintenance:mode --off; done
 ```
 
 > **⚠ Nextcloud dirties `.htaccess` in every worktree, and it is a tracked file.** The
 > installer appends its own `ErrorDocument` block below a `DO NOT CHANGE ANYTHING ABOVE
 > THIS LINE` marker, so `git status` shows `M .htaccess` permanently. Any pull whose
 > range touches that file aborts with *"Your local changes would be overwritten by
-> merge"* — mid-runbook, with the instance already stopped. Discard the local edit and
-> pull again; Nextcloud regenerates it on the next start:
->
-> ```bash
-> git -C workspace/server checkout -- .htaccess && git -C workspace/server pull
-> ```
+> merge"*, mid-runbook, with the instance already stopped. That is why step 4 discards
+> the edit before every pull rather than waiting for the abort. Nothing is lost:
+> Nextcloud writes it again on the next start.
 
 > **⚠ The fetch refspec is narrowed to master.** `bootstrap.sh` configures the server
 > clone with `remote.origin.fetch = +refs/heads/master:refs/remotes/origin/master`, so a
 > bare `git fetch` in `workspace/server` **only ever sees master**. Stable branches have
 > no upstream tracking, and `git pull` with no arguments fails in those worktrees.
-> Always name the remote and branch: `git pull origin stable34`, run **from inside** the
-> worktree. Fetching into a checked-out branch from elsewhere
+> Always name the remote and branch: `git pull origin stable34`, run **in** the worktree
+> (`git -C workspace/stable34 pull origin stable34` counts). Fetching into a checked-out branch from elsewhere
 > (`git fetch origin stable34:stable34`) is refused by git while that branch is checked
 > out in a worktree.
 >
@@ -779,6 +813,7 @@ git -C ../stable35 submodule update --init
 
 # 3. Worktrees for each app that has a matching stable branch.
 #    FETCH FIRST — the app clone has not seen the new branch yet.
+#    (viewer stops at stable35: from 36 it ships inside the server — see field notes)
 cd apps-extra/viewer
 git fetch origin
 git worktree add ../../../stable35/apps-extra/viewer stable35
@@ -822,8 +857,8 @@ That is the signal to review their `max-version`, not a fault. Finish with step 
 schema gaps it repairs actually show up.
 
 **Pull the tracked apps in the same window.** Bundled and companion apps move their
-`min-version` to the new major as soon as it opens, so upstream `master` of `viewer`,
-`profiler`, `circles` and friends will already be `min-version="36" max-version="36"`
+`min-version` to the new major as soon as it opens, so upstream `master` of `profiler`,
+`circles` and friends will already be `min-version="36" max-version="36"`
 while your checkouts still say 35. Leave them behind and the instance lands on 36 with
 its apps incompatible in the *other* direction:
 
@@ -831,6 +866,15 @@ its apps incompatible in the *other* direction:
 for d in workspace/server/apps-extra/*/; do
   [ -e "$d/.git" ] && { printf '%-20s ' "$(basename "$d")"; git -C "$d" pull --ff-only; }
 done
+```
+
+A major release is also when an app is most likely to be **retired into the server**,
+as `viewer` was for 36. Before a new major, compare the server's `apps/` against your
+`apps-extra/`. An app ID present in both means two copies of one app on the instance:
+
+```bash
+comm -12 <(ls workspace/server/apps) \
+         <(cd workspace/server/apps-extra && ls -d */appinfo 2>/dev/null | cut -d/ -f1)
 ```
 
 Those pulls are safe precisely because `apps-extra` is per-instance: a `min-version="36"`
@@ -1073,15 +1117,22 @@ Every instance installs with the same fixtures, which is what makes them disposa
 
 **Monthly** — or whenever the schedule says a patch shipped:
 
+- [ ] `STABLES=` lists **every** `stableNN` you run
 - [ ] **Backup first** — database dump, config volumes, and the commit SHAs
 - [ ] `git pull` in `nextcloud-docker-dev`
 - [ ] `make pull-installed`
+- [ ] Step 2a: local and remote master on the same major, or switch to 4.2
 - [ ] **`docker compose stop nextcloud stableNN`** before touching any checkout
-- [ ] `git pull` in **every** `workspace/*` worktree (name the branch for stable ones)
+- [ ] `checkout -- .htaccess`, then `git pull --ff-only` in **every** `workspace/*`
+      worktree (name the branch for stable ones)
 - [ ] `git submodule update --init` in each worktree that moved
+- [ ] `git pull --ff-only` in every app under `workspace/*/apps-extra/`, stable ones
+      included; a failure there means upstream moved the branch, so investigate it
+      rather than forcing it
 - [ ] `docker compose up -d <services>` — not `restart`, and not Docker Desktop's Play
 - [ ] `occ upgrade` on each instance
-- [ ] `occ db:add-missing-indices` / `-columns` / `-primary-keys`, then `db:schema:check`
+- [ ] `occ db:add-missing-indices` / `-columns` / `-primary-keys` on each instance, then
+      `db:schema:check` (35 and newer only)
 - [ ] `occ maintenance:mode` reports off on each instance
 - [ ] Skim the changelog for the majors you support
 
@@ -1095,6 +1146,7 @@ Every instance installs with the same fixtures, which is what makes them disposa
 - [ ] **Pull `master`** so it becomes the new dev major
 - [ ] Retire the worktree and container for the major that just hit EOL
 - [ ] Review every app's `max-version` against the new release
+- [ ] Check no `apps-extra` app now also ships in the server's `apps/`
 
 **Never:**
 
@@ -1232,6 +1284,66 @@ bug that only reproduces on your long-lived instance may be a historical artefac
 than something a user will ever hit. Re-installing an instance is a legitimate
 diagnostic step, which is another reason to keep the stable ones disposable.
 
+(As of the 25 Oct 2026 run, `db:schema:check` comes back clean on the 36 instance too.)
+
+**A migration added without a version bump never runs on existing instances.** The
+mirror image of the drift above: `occ upgrade` on `stable35` ended with *"missing table
+'oc_tickbuddy_idempotency'"*, even though the app's code, served from the shared apps
+path, contained the migration that creates it. Nextcloud runs an app's pending migrations
+only when the `<version>` in `info.xml` is higher than the instance's `installed_version`.
+The migration had been added without a version bump, so both stood at `2.3.0` and the
+upgrade never started:
+
+| Instance | migrations recorded | table |
+| --- | --- | --- |
+| `nextcloud` (36) | 1000–1004 | present (migrated there during development) |
+| `stable34` | 1000–1003 | **missing**, and nothing said so |
+| `stable35` | 1000–1003 | **missing** |
+
+`stable34` was just as broken and reported nothing, because `db:schema:check` does not
+exist in 34. To repair an instance in place, run `occ migrations:migrate <app>`, which
+prints nothing on success, so confirm with `occ migrations:status <app>` or by looking
+for the table. The actual fix is in the app: **bump `<version>` in the same commit that
+adds a migration.** Otherwise every install already on that version, users included,
+silently goes without it.
+
+**An app can be retired into the server, and its clone keeps working against you.** For
+36, `viewer` stopped being an app: it moved into the server as `apps/viewer`, built on
+the `@nextcloud/viewer` library (nextcloud/server#63954). Upstream froze `master` and
+started `main` as a **new root commit**, containing nothing but a README. Seen from
+`apps-extra/viewer`, three things happened at once:
+
+- `git pull` failed with *"no such ref was fetched"*, because `master` had gone.
+- After renaming the branch to track `main`, `--ff-only` refused: *ahead 4036, behind
+  10*, with no merge base. It looked like a rename and was not one. A plain `git pull`
+  without `--ff-only` would have tried to merge two unrelated histories into an app
+  directory.
+- The freshly pulled 36 server now shipped `apps/viewer` with the **same app ID and
+  version** (`9.0.0-dev.0`) as the frozen clone. That put two copies of one app on the
+  instance, with no telling which one loads.
+
+The clone could not simply be deleted. It was the repository behind the
+`stable34/apps-extra/viewer` and `stable35/apps-extra/viewer` worktrees, and those are
+still the right source for 34 and 35. The fix kept the repository and emptied the
+directory:
+
+```bash
+cd workspace/server/apps-extra/viewer
+git branch master-frozen <old master tip>   # origin/master is pruned; keep the history
+git checkout -B main origin/main            # README only: no appinfo/, so Nextcloud skips it
+```
+
+`occ app:getpath viewer` then answered `/var/www/html/apps/viewer`, the stable worktrees
+were untouched, and next month's app loop pulls `main` cleanly. Once the last stable
+branch that still ships the app reaches EOL, the clone can go.
+
+**`occ upgrade` also updates App Store apps.** `stable34` printed *"Update app assistant
+from App Store"* in the middle of a routine run. Apps installed from the store, as
+opposed to mounted from `apps-extra`, are upgraded by `occ upgrade` without a git
+operation anywhere. They are the one part of the environment that does update itself,
+and they are not covered by `commits.txt`; the database dump and config volumes are what
+take them back.
+
 **Redis is shared and it is fine.** No `dbindex`, no per-instance prefix in the config —
 Nextcloud namespaces keys by `instanceid` internally. Worth knowing before someone
 "fixes" the shared cache. The flip side: `FLUSHALL` hits every instance at once, and
@@ -1275,3 +1387,8 @@ Verified against a live setup on 19 Sep 2026: `nextcloud-docker-dev` at `df4ca69
 upstream `nextcloud/server` master (`36.0.0 dev`), `stable34` (`34.0.4`) and the released
 `v35.0.0` (build `35.0.0.10`). Schedule figures from the server wiki's Maintenance and
 Release Schedule; where it and this document disagree, the wiki is right.
+
+Runbook 4.1 re-run end to end on 25 Oct 2026 across three instances: harness
+`c5782a4` → `d2ef61f`, `workspace/server` `601b9aca834` → `210c6b573e4` (`36.0.0 dev`),
+`stable34` 34.0.4 → 34.0.5, `stable35` 35.0.1 → 35.0.2, all four `nextcloud-dev-*`
+images newly pulled.
