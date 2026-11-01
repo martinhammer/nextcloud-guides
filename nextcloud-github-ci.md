@@ -4,10 +4,16 @@ Which GitHub Actions workflows a Nextcloud app should run, where they come from,
 each one needs from the repository, and how to keep them current. Run the audit at
 the end against your own repo and compare the result with this guide.
 
-- **Applies to:** any Nextcloud app on GitHub whose `.github/workflows/` came from
-  `nextcloud/app_template` or from the org templates in `nextcloud/.github`
+- **Applies to:** Nextcloud apps on GitHub **outside the `nextcloud` org**, usually
+  with a single default branch, whose `.github/workflows/` came from
+  `nextcloud/app_template` or from the org templates in `nextcloud/.github`. The aim
+  is a CI that is green when nothing is wrong, including the weekly scheduled runs.
+- **How:** the org templates are the source, and this guide lists the org-specific
+  assumptions to undo after every sync: owner, runner, repo settings and branches
+  (see "Apps outside the `nextcloud` org").
 - **Researched against:** `nextcloud/.github` `workflow-templates/` at `807f558`
-  (2026-10-28) and `nextcloud/app_template` (October 2026)
+  (2026-10-28), re-checked for branch matrices on 2026-11-01, and
+  `nextcloud/app_template` (October 2026)
 
 ---
 
@@ -47,7 +53,7 @@ before pushing to reproduce the check.
 | `block-unconventional-commits.yml` | PR | Commit messages follow Conventional Commits | — |
 | `fixup.yml` | PR | No `fixup!` / `squash!` commits | — |
 | `update-nextcloud-ocp-matrix.yml` | weekly | Opens a PR bumping `nextcloud/ocp`, then approves it and turns on auto-merge itself | — |
-| `npm-audit-fix.yml` | weekly | Opens a PR with `npm audit fix` and rebuilt assets, then approves it and turns on auto-merge itself | — |
+| `npm-audit-fix.yml` | weekly | Opens a PR with `npm audit fix` and rebuilt assets, on the default branch **and on each `stableNN` branch its matrix lists**, then approves it and turns on auto-merge itself. Trim the branches you do not have (see "Apps outside the `nextcloud` org") | — |
 | `appstore-build-publish.yml` | release published | Builds the app, signs it and uploads it to the app store. `app_template` ships it with a `.yml.patch` (see "Apps outside the `nextcloud` org") | — |
 
 The scheduled workflows' approve and auto-merge steps depend on repo settings that
@@ -138,7 +144,7 @@ wrong, a check fails or, worse, quietly checks nothing.
 ## Apps outside the `nextcloud` org
 
 The templates are written for repos in the `nextcloud` organisation. In any other
-account, four things differ:
+account, five things differ:
 
 - **Owner guards switch whole jobs off.** Some templates run their job only for a
   given owner, and anywhere else the job is **skipped**. A skipped job counts as
@@ -167,6 +173,24 @@ account, four things differ:
   hosted-runner labels. It is a runner the Nextcloud org provides. Elsewhere, jobs
   that ask for it are never picked up. Use `ubuntu-latest`, and re-apply that after
   every sync.
+- **Branch matrices name Nextcloud's stable branches.** Some templates run once per
+  branch and hard-code the org's current `stableNN` list next to the default branch:
+
+  | Template | In the baseline? |
+  | --- | --- |
+  | `npm-audit-fix.yml` | Yes |
+  | `update-nextcloud-ocp.yml` | No, only if the app adopts it. The baseline's `update-nextcloud-ocp-matrix.yml` lists the default branch alone and is not affected |
+
+  (`playwright.yml` also names `stable35` and friends, but in its `pull_request`
+  branch filter, where a missing branch just never matches. Leave it.)
+
+  An app with only `main` does not have those branches, and since 2026-10-01 each
+  missing one is a **red job on every run** (see the 2026-11-01 field note). Remove
+  the entries for branches the repo does not have. Use the post-sync step in "Keeping
+  workflows in sync", **not a `.yml.patch`**: upstream rotates the list at every
+  branch-off and EOL (five commits in the year to Oct 2026), and a hunk that deletes
+  `'stable35'` stops applying at the next rotation. The step checks against the
+  repo's real branches, so a `stableNN` the app does create keeps its entry.
 - **`sync-workflow-templates.yml` does not work as shipped.** It checks out
   `<owner>/.github`, which is your account rather than `nextcloud`, and needs the
   org's `COMMAND_BOT_WORKFLOWS` secret. Sync by hand instead (below).
@@ -190,11 +214,21 @@ audit below reports these as `RETIRED`.
 
 **To update**, use the manual script from the `nextcloud/.github` README (*Update
 workflows manually*). It clones the templates, rsyncs over only the files you already
-have, and re-applies the patches. Outside the org, then run:
+have, and re-applies the patches. Outside the org, then run this post-sync step:
 
 ```sh
+# The org's runner label does not exist outside the org
 sed -i 's/ubuntu-latest-low/ubuntu-latest/' .github/workflows/*.yml
+# Drop matrix entries for stable branches this repo does not have
+for b in $(grep -ho "'stable[0-9]*'" .github/workflows/*.yml | tr -d "'" | sort -u); do
+	git ls-remote --exit-code --heads origin "$b" > /dev/null ||
+		sed -i "/^ *- '$b'$/d" .github/workflows/*.yml
+done
 ```
+
+Both are mechanical rewrites the audit normalises away, which is why they are a
+step rather than `.yml.patch` files: they keep working however upstream reshuffles
+the lines around them.
 
 Then check the diff for any `repository_owner ==` guard that came in without a patch,
 review the rest, and run CI before merging. **Sync on a schedule, every few months,
@@ -204,7 +238,8 @@ and whenever one check starts failing on every PR at once.**
 
 Run this from the app's repo root. It changes nothing. For each workflow it reports
 whether you match the current template, once your `.yml.patch` files are applied and
-pinned SHAs and the runner label are ignored.
+pinned SHAs, the runner label and matrix entries for branches this repo does not have
+are ignored.
 
 ```bash
 #!/usr/bin/env bash
@@ -214,11 +249,22 @@ pinned SHAs and the runner label are ignored.
 set -euo pipefail
 
 tmp=$(mktemp -d)
-# Pinned SHAs differ for harmless reasons (Dependabot timing), and outside the org
-# `ubuntu-latest-low` is replaced by `ubuntu-latest`, so normalise both away.
+# Branches this repo has. A matrix entry naming any other `stableNN` is trimmed by
+# the post-sync step, so it is normalised away below and reported as BRANCH.
+heads=$(git ls-remote --heads origin | sed 's|.*refs/heads/||')
+has_branch() { printf '%s\n' "$heads" | grep -qx "$1"; }
+# Pinned SHAs differ for harmless reasons (Dependabot timing), outside the org
+# `ubuntu-latest-low` is replaced by `ubuntu-latest`, and matrix entries for branches
+# this repo does not have are dropped. Normalise all three away.
 norm() {
 	sed -E -e 's/(uses:[[:space:]]*[^@[:space:]]+)@[^[:space:]]+([[:space:]]*#.*)?$/\1@PIN/' \
-		-e 's/ubuntu-latest-low/ubuntu-latest/' "$1"
+		-e 's/ubuntu-latest-low/ubuntu-latest/' "$1" |
+		while IFS= read -r line; do
+			if [[ $line =~ ^\ *-\ \'(stable[0-9]+)\'$ ]] && ! has_branch "${BASH_REMATCH[1]}"; then
+				continue
+			fi
+			printf '%s\n' "$line"
+		done
 }
 # Exit 1 = no such template (404); 2 = the request failed, which must not pass for "local".
 template() {
@@ -277,6 +323,11 @@ for n in $(printf '%s\n%s\n' "$baseline" "$mine" | sort -u); do
 			echo "GUARD    $n  (a sync would add a guard: job runs only for '$g', this repo is '$owner')"
 		fi
 	done
+	# A matrix entry for a branch this repo does not have fails every run (only your
+	# file is checked: the template always has them, and the post-sync step trims them).
+	for b in $(grep -o "^ *- 'stable[0-9]*'$" "$f" | grep -o 'stable[0-9]*' | sort -u); do
+		has_branch "$b" || echo "BRANCH   $n  (matrix names '$b', which this repo does not have)"
+	done
 	if ! diff -q <(norm "$f") <(norm "$ref") > /dev/null; then
 		echo "DRIFT    $n"
 		[ "${VERBOSE:-}" ] && diff <(norm "$f") <(norm "$ref") | sed 's/^/           /' || true
@@ -292,12 +343,13 @@ How to read the result:
 
 | Status | Meaning | Action |
 | --- | --- | --- |
-| `same`, `pins` | In step with upstream (`pins`: only SHAs or the runner label differ) | None. Dependabot handles the pins |
+| `same`, `pins` | In step with upstream (`pins`: only SHAs, the runner label or trimmed branch entries differ) | None. Dependabot handles the pins |
 | `DRIFT` | Steps differ from the template | Sync. If the difference is deliberate, move it into a `.yml.patch` |
 | `PATCH` | The template changed under your patch | Re-make the patch against the new template |
 | `MISSING` | A baseline workflow is absent | Add it, or record why the app does not need it |
 | `RETIRED` | Upstream renamed or dropped this template; syncing would install a failing stub | Do what the message says: rename the file, or delete it (see "Renamed or retired templates") |
 | `GUARD` | The workflow's job runs only for another owner, so here it is silently skipped, or would be after a sync. Printed in addition to the status | Remove the guard with a `.yml.patch` (see "Apps outside the `nextcloud` org") |
+| `BRANCH` | Your file's matrix names a `stableNN` branch this repo does not have, so that job fails on every run. Printed in addition to the status | Run the post-sync step (see "Keeping workflows in sync") |
 | `ERROR` | The template could not be fetched (rate limit, network) | Re-run. Never read it as `local` |
 | `local` | No org template has this name | Fine if it is yours (e.g. an `assign.yml`). If it is a renamed copy of a template, rename it back so syncs reach it |
 
@@ -310,6 +362,8 @@ Then go through the checklist:
       `update-nextcloud-ocp-matrix.yml` is synced.
 - [ ] Outside the org: no `ubuntu-latest-low` left in `.github/workflows/`, and no
       `GUARD`. Each owner guard is removed by a `.yml.patch`.
+- [ ] Outside the org: no `BRANCH`. No workflow matrix names a branch this repo
+      does not have.
 - [ ] The scheduled workflows' approve/auto-merge steps either have their repo
       settings on (Actions may approve PRs, Allow auto-merge, required checks) or
       are removed by a `.yml.patch`.
@@ -494,7 +548,8 @@ missed.
 **What a naive full sync does to an app that predates these changes** (copy every
 template over its existing file, as the manual update script does): CI goes red twice,
 once from the `node.yml` stub and once from the approve-merge stub, and outside the org
-the `ocp` bump PRs stop without any failure. So:
+the `ocp` bump PRs stop without any failure. A third red, on the weekly
+`npm-audit-fix` run, was found only after this review: see the 2026-11-01 note. So:
 
 1. `git mv .github/workflows/node.yml .github/workflows/npm-build.yml`
 2. Sync, including `update-nextcloud-ocp-matrix.yml`.
@@ -505,10 +560,66 @@ the `ocp` bump PRs stop without any failure. So:
    every run.
 4. Delete `update-nextcloud-ocp-approve-merge.yml` in the same change as step 2,
    since its old copy did the approving until then.
-5. Run the audit: no `RETIRED`, no `GUARD`.
+5. Outside the org: run the post-sync step (runner label and branch matrix, see
+   "Keeping workflows in sync").
+6. Run the audit: no `RETIRED`, no `GUARD`, no `BRANCH`.
 
 **Lesson for audits:** besides diffing contents, check each template's `name:` for
 `No-op` and each job's `if:` for an owner. Both turn a sync into a silent change of
 behaviour. The audit script now does both. It also stopped treating a failed request as
 "no such template": a transient API error had reported a retired template as `local`.
 Now only a 404 means `local`, and anything else is `ERROR`.
+
+### 2026-11-01 — `npm-audit-fix` fails every week on stable branches the app does not have
+
+**Symptom.** After the 2026-10-28 sync, every scheduled `npm-audit-fix` run is red.
+The `npm-audit-fix-main` job succeeds and opens its PR. The `npm-audit-fix-stable35`,
+`-stable34` and `-stable33` jobs fail at *Read package.json node and npm engines
+version*:
+
+```
+The process '/usr/bin/git' failed with exit code 1
+Cannot find module '/home/runner/work/<app>/<app>/package.json' imported from …/parse-package-engines-action/…/dist/index.js
+```
+
+**Who is affected.** Apps without the org's `stableNN` branches that synced
+`npm-audit-fix.yml` (or use `update-nextcloud-ocp.yml`) after 2026-10-01. Before the
+sync, the app's copy listed only the default branch, which is why the review two days
+earlier, which diffed step contents but never matrix values, did not catch it.
+
+**Mechanism.**
+
+- The template's matrix is the default branch plus the org's current stable branches,
+  and upstream rewrites that list at every branch-off and EOL (`Support stable34`,
+  `Support stable35`, `stable32 is community eol`, …).
+- Checkout of a missing branch has always failed, behind `continue-on-error: true`.
+  The template is meant to tolerate it: until 2026-10-01 the next step,
+  `skjnldsv/read-package-engines-version-actions`, had `fallbackNode`/`fallbackNpm`,
+  so an empty checkout ran through and nothing went red.
+- nextcloud/.github `121bf70` (2026-10-01) switched to
+  `nextcloud-libraries/parse-package-engines-action`, which has no fallback and fails
+  without a `package.json`. `7a0c12c` (2026-10-11) gated the later steps on
+  `steps.freeze.outputs.active != 'true'` alone. The freeze step is itself skipped
+  when checkout fails, so `active` is empty and every step after it runs on the empty
+  workspace.
+
+**Fix.** Drop the matrix entries for branches the repo does not have, with the
+post-sync step in "Keeping workflows in sync". Then run the audit: it reports
+`BRANCH` for any entry that is left.
+
+**Not recommended: a `.yml.patch` that deletes the `stableNN` lines.** It works until
+upstream's next rotation, about every four months. Then the patch no longer applies,
+the audit says `PATCH`, and it has to be re-made by hand at every sync. The
+alternative patch, adding `steps.checkout.outcome == 'success' &&` to each
+freeze-gated step, survives rotations but has to be re-made whenever upstream touches
+those conditions, and still runs three useless jobs a week.
+
+**Upstream.** This is a regression in the org template, and it also hits nextcloud
+apps that skip a stable branch. Restoring the checkout condition in the four
+freeze-gated steps would make missing branches skip quietly again. Trimming the
+matrix stays worthwhile even if that lands.
+
+**Lesson for audits:** a template written for the org assumes the org's **owner,
+runner, repo settings and branches**. Check all four after a sync, and treat a
+change in a weekly job's result as a change in the template, not in the app: compare
+the last green run with the first red one and look at what was synced in between.
