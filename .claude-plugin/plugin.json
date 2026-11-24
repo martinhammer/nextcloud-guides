@@ -1,0 +1,12 @@
+{
+  "name": "nextcloud",
+  "displayName": "Nextcloud app development",
+  "description": "Tested guidance for building and maintaining Nextcloud apps: CI workflows, app icons, charts, OCS error handling, the HTTP client, ESLint v9 and the nextcloud-docker-dev environment.",
+  "author": {
+    "name": "Martin Hammer",
+    "url": "https://github.com/martinhammer"
+  },
+  "homepage": "https://github.com/martinhammer/nextcloud-guides",
+  "repository": "https://github.com/martinhammer/nextcloud-guides",
+  "keywords": ["nextcloud", "nextcloud-app", "php", "vue"]
+}

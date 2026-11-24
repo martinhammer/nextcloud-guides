@@ -1,0 +1,15 @@
+{
+  "name": "nextcloud-guides",
+  "owner": {
+    "name": "Martin Hammer",
+    "url": "https://github.com/martinhammer"
+  },
+  "description": "Nextcloud app development guides, packaged as a Claude Code plugin",
+  "plugins": [
+    {
+      "name": "nextcloud",
+      "source": "./",
+      "description": "Tested guidance for building and maintaining Nextcloud apps: CI workflows, app icons, charts, OCS error handling, the HTTP client, ESLint v9 and the nextcloud-docker-dev environment."
+    }
+  ]
+}
