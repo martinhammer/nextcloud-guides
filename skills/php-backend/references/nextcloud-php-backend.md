@@ -55,6 +55,38 @@ catch, and the conventions the apps follow to avoid it.
   text a user typed is refused with a 400 instead, since cutting it saves something
   they did not enter. Store each external item on its own, so one bad item fails
   alone.
+- **A NOT NULL column whose entity property starts with a value needs that value as
+  its migration `default`.** `Entity`'s setter ignores a value equal to the one it
+  holds (the field is not marked updated) and `QBMapper::insert` writes only updated
+  fields, so a new entity left at its starting value is inserted without that column
+  and the database refuses the row (MySQL: `1364 Field 'x' doesn't have a default
+  value`). Unit tests that mock the mapper can't see it.
+- **An entity's `addType()` must match the physical column type.** For a 0/1 flag,
+  use an `INTEGER` column with `addType('x', 'integer')` and convert to `bool` at the
+  API boundary. `Types::BOOLEAN` is `tinyint(1)` on MySQL but a native `boolean` on
+  PostgreSQL, where an integer-typed entity reads `'t'`/`'f'` as 0 and integer writes
+  are refused; on Oracle Nextcloud makes every NOT NULL boolean nullable
+  (`MigrationService`, server PR #55156). Turning a PostgreSQL boolean column back
+  into an integer needs an explicit `USING x::int` cast.
+- **Oracle stores `''` as NULL**: a NOT NULL column can't hold an empty string, and
+  Nextcloud's migration check refuses a NOT NULL column with an empty default. Keep
+  optional text nullable and answer `""` at the API if clients expect a string.
+  **Comparing a TEXT (CLOB) column** in `eq()`/`neq()` needs
+  `IQueryBuilder::PARAM_STR` passed explicitly; Oracle's expression builder then
+  compares `to_char(column)`, as a CLOB can't be compared directly.
+
+## Concurrent writes
+
+- **On PostgreSQL a unique violation aborts the whole transaction**: every later
+  statement fails until rollback. So a write that catches the violation and retries
+  (insert-or-update races, "insert, and on a duplicate update instead") must not run
+  inside a transaction. Retrying a whole transaction is fine, because each attempt
+  starts a new one. Catch `OCP\DB\Exception` with
+  `getReason() === Exception::REASON_UNIQUE_CONSTRAINT_VIOLATION`, bound the retries
+  (e.g. 3), then let the error escape with nothing written.
+- **Atomic counter without a transaction:** `UPDATE … SET value = value + :delta`
+  first; with no row, insert; on a unique violation (another request inserted it)
+  run the update again.
 
 ## App version
 
@@ -84,6 +116,25 @@ catch, and the conventions the apps follow to avoid it.
   "$app-<entry>")` and `Util::addStyle($app, "$app-<entry>")`.** The Vite build emits
   a separate CSS file per entry; without `addStyle` the panel renders unstyled. The
   entry name must match the key in `vite.config.ts`.
+- **Scalar parameters are cast with `settype()`** (`Dispatcher`). For `bool` only the
+  string `'false'` becomes false, so `no` and `off` arrive as `true`. The type comes
+  from the signature when it is a single named type (`?bool` included), otherwise
+  from a one-word docblock `@param <type> $x`. To read a flag strictly (true/false,
+  1/0, yes/no, on/off, anything else 400), declare the parameter as a union in the
+  signature **and** the docblock (`@param string|int|float|bool|null $x`, which
+  neither reads) and parse it yourself. The same holds for numbers you want to
+  refuse with your own error shape. Under `strict_types`, a `string` parameter that
+  receives a JSON number fails with a `TypeError`, a bare 400 without your error
+  shape; type it as a union too.
+- **A route with a `{placeholder}` next to a literal sibling needs `requirements`**:
+  `#[ApiRoute(verb: 'PUT', url: '/api/items/{id}', requirements: ['id' => '\d+'])]`.
+  Without it `{id}` matches any segment, so `PUT /api/items/{id}` also matches
+  `/api/items/reorder`. Which route wins then depends on method order in the
+  controller (routes are read by reflection in source order, first match wins), and
+  `settype()` turns `"reorder"` into 0: a silent 404.
+- **Rate limits answer by status only**: an exceeded `#[UserRateLimit]` or
+  `#[AnonRateLimit]` is a 429 from the middleware, an HTML page when the request's
+  `Accept` mentions html and an empty body otherwise. Clients go by the status.
 - **Task Processing:** probe providers with `getAvailableTaskTypes()`;
   `getAvailableTaskTypeIds()` is newer and may be missing on older majors.
 
