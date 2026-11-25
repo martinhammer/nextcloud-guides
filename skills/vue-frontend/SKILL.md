@@ -1,6 +1,6 @@
 ---
 name: vue-frontend
-description: "Pitfalls in Nextcloud app Vue 3 frontends with @nextcloud/vue 9: API drift that fails only at runtime, component sizing quirks, Nextcloud core CSS overriding app styles, theme colour pairs, dialogs, confirmations and toasts, build, dependency and CI wiring. This skill should be used when writing or reviewing .vue, .ts or CSS frontend code, when adding a dialog, confirmation or toast, when bumping @nextcloud/vue or any frontend dependency (including Dependabot bumps that fail npm ci), and whenever a control or form silently doesn't update or sends empty or stale values, renders too tall, ignores its CSS, or a toast disappears."
+description: "Pitfalls in Nextcloud app Vue 3 frontends with @nextcloud/vue 9: API drift that fails only at runtime, component sizing quirks, Nextcloud core CSS overriding app styles, theme colour pairs, dialogs, confirmations and toasts, build, dependency and CI wiring. This skill should be used when writing or reviewing .vue, .ts or CSS frontend code, when adding a dialog, confirmation or toast, when showing weeks or calendars (first day of week), when bumping @nextcloud/vue or any frontend dependency (including Dependabot bumps that fail npm ci), and whenever a control or form silently doesn't update or sends empty or stale values, renders too tall, ignores its CSS, or a toast disappears."
 paths: "src/**/*.vue, src/**/*.css, src/**/*.scss, vite.config.*, package.json"
 ---
 
@@ -21,6 +21,8 @@ The rules most often broken (details and reasons in the guide):
 - **Toolkit only:** `NcDialog` for prompts and confirms, `@nextcloud/dialogs` for
   toasts; never `window.confirm/alert/prompt`. Since dialogs v8, don't import
   `@nextcloud/dialogs/style.css`.
+- **First day of week: `getFirstDay()` from `@nextcloud/l10n`**, never
+  `Intl.Locale` week info (browsers disagree, and it ignores the user's setting).
 - **`generateOcsUrl` encodes `/` inside a `{param}`**: interpolate multi-segment
   paths into the template.
 - **CI templates call `npm run ts:check` and `npm run test` with `--if-present`**:

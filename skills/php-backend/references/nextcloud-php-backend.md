@@ -87,6 +87,52 @@ catch, and the conventions the apps follow to avoid it.
 - **Task Processing:** probe providers with `getAvailableTaskTypes()`;
   `getAvailableTaskTypeIds()` is newer and may be missing on older majors.
 
+### Public (unauthenticated) OCS endpoints
+
+For a link or token that works without a login (a share link, a webhook, a
+script's URL):
+- `#[PublicPage]` + `#[NoCSRFRequired]` on an `OCSController` method; the caller
+  then needs no `OCS-APIRequest` header.
+- **OCS answers XML when the client asks for no format**, and curl
+  (`Accept: */*`) and a browser bookmark ask for none. If people or scripts call
+  the endpoint, default to JSON in the controller; `?format=xml` still works:
+  ```php
+  public function buildResponse($response, $format = 'json') {
+      return parent::buildResponse($response, $format);
+  }
+  ```
+- **Two `#[ApiRoute]`s on one method need distinct `postfix` values**
+  (`#[ApiRoute(verb: 'POST', url: '/x/{token}', postfix: 'post')]`); without one
+  they share a route name and the second replaces the first.
+- **A public page skips Nextcloud's checks for the owner.** There is no
+  meaningful `$userId` (Nextcloud injects the caller's session, or null). Resolve
+  the owner from the token, and check that the owner exists, is enabled and has
+  the app enabled. Otherwise answer the same 404 as for an unknown token, so
+  tokens can't be probed.
+- **Throttle:** `#[BruteForceProtection(action: '<app>PublicLink')]` with
+  `$response->throttle()` only on tokens that never existed;
+  `#[AnonRateLimit(limit: 60, period: 60)]` counts per calling address.
+- **"Today" is the owner's day**: the `core` / `timezone` user value, else the
+  server default. `IDateTimeZone::getTimeZone($ts, $owner)` falls back to the
+  *caller's* session offset.
+
+### Capabilities for clients
+
+Clients (mobile apps, CLIs) find out what the server supports from capabilities,
+not by sniffing versions or probing for 404s.
+- `$context->registerCapability(Capabilities::class)`; the class implements
+  `OCP\Capabilities\ICapability::getCapabilities()` and returns
+  `[$appId => ['version' => …, 'apiVersion' => …, 'features' => [...]]]`. It is
+  served in `GET /ocs/v2.php/cloud/capabilities` to any authenticated user (an
+  app password works). Also implement `IPublicCapability` only for what anonymous
+  callers may see.
+- **Every optional endpoint or parameter a client may use gets a boolean
+  feature flag.** An older server usually fails quietly: it ignores an unknown
+  parameter and answers 200, or 404s a new route. A flag is the only way a client
+  can tell the difference.
+- Bump `apiVersion` only on a breaking change; additive changes get flags. Never
+  rename or remove a flag. A planned feature's flag stays `false` until it ships.
+
 ## Supported Nextcloud versions
 
 - **A dev instance is a git checkout, not a release.** It is exactly as current as its

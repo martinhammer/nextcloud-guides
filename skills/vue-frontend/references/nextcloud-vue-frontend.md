@@ -111,6 +111,16 @@ don't catch, and the conventions the apps follow.
   into the template instead.
 - Error messages: the `ocs-errors` skill (it also covers `?format=json`).
 
+## Dates and locale
+
+- **First day of the week: `getFirstDay()` from `@nextcloud/l10n`** (0 = Sunday …
+  6 = Saturday). It reads the value the server injects from the user's Nextcloud
+  locale, so it is the same in every browser and matches the user's setting. Don't
+  use `Intl.Locale` week info: Chromium exposes a `weekInfo` property, Firefox
+  only a `getWeekInfo()` method, and they disagree for locales without a region.
+- Day and month labels: `getDayNames()`, `getDayNamesShort()`, `getDayNamesMin()`,
+  `getMonthNames()`, `getMonthNamesShort()` from the same package.
+
 ## Build and CI wiring
 
 - **Vite entry keys map to output names `<app>-<key>`**; PHP's
