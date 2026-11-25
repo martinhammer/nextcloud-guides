@@ -5,7 +5,8 @@ catch, and the conventions the apps follow to avoid it.
 
 - **Applies to:** Nextcloud PHP apps targeting Nextcloud 33–36
 - **Sources:** problems hit in production apps (2026-09 to 2026-11); server behaviour
-  read in the `stable34`, `stable35` and `master` source
+  read in the `stable34`, `stable35` and `master` source; version ranges and PHP bounds
+  checked against those checkouts (2026-10)
 
 ---
 
@@ -85,6 +86,31 @@ catch, and the conventions the apps follow to avoid it.
   entry name must match the key in `vite.config.ts`.
 - **Task Processing:** probe providers with `getAvailableTaskTypes()`;
   `getAvailableTaskTypeIds()` is newer and may be missing on older majors.
+
+## Supported Nextcloud versions
+
+- **A dev instance is a git checkout, not a release.** It is exactly as current as its
+  last pull: a `35.0.0 dev` lacks code merged since and may contain code reverted
+  before GA. Before treating a difference as a bug, confirm what the instance runs
+  (`occ status`).
+- **Declare the range in `appinfo/info.xml`**
+  (`<nextcloud min-version="33" max-version="35"/>`). Nextcloud refuses to enable the
+  app outside it, and the app store won't offer it there. Three majors are supported
+  at once, so a range of three is normal, and that means three instances to test on:
+  the oldest major (your floor still works), the middle one (where most users are) and
+  the newest (you're not about to break). Raise `max-version` only after testing that
+  major, and publish a release that declares it.
+- **"N apps have no compatible version" is about the app store, not your code.** The
+  admin overview lists apps with no *published release* for the target version. A
+  local app can work and still appear there. A different, local problem: an app whose
+  `max-version` is below the instance's major **cannot be enabled at all**; fix it by
+  testing and raising the range.
+- **The PHP floor moves with the major.** Read the bounds from the server
+  (`grep -A2 'PHP_VERSION_ID' lib/versioncheck.php`) rather than assuming. In late
+  2026: Nextcloud 34 runs PHP 8.2–8.5, Nextcloud 35 runs 8.3–8.5. An app's floor is
+  the **lowest** across its range, but its syntax must also parse on the highest; an
+  instance on the newest PHP won't catch an incompatibility with the oldest. The same
+  floor drives `nextcloud/ocp`, the Psalm matrix and `psalm.xml` (see Static analysis).
 
 ## Composer and the autoloader
 

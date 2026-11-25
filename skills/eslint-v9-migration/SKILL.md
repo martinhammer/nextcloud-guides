@@ -14,5 +14,5 @@ The Dependabot bump fails because v9 needs work by hand:
 
 Follow the steps in `${CLAUDE_SKILL_DIR}/references/nextcloud-eslint-config-v9-migration.md`
 in order (pre-flight inventory through verify), including its CI step. The guide's
-steps have not yet been run end to end on a real app: when you migrate one, note
+steps have not yet been run end to end on a real app: after migrating one, note
 what differed and propose an update to the guide.

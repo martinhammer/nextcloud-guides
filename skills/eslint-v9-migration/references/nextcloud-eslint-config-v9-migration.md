@@ -14,6 +14,24 @@ on its own always fails CI.
 
 ---
 
+**Contents**
+
+- [Why the Dependabot PR fails](#why-the-dependabot-pr-fails)
+- [What changes, v8 → v9](#what-changes-v8--v9)
+- [Step-by-step](#step-by-step)
+  - [0. Pre-flight inventory](#0-pre-flight-inventory)
+  - [1. Update the dependencies](#1-update-the-dependencies)
+  - [2. Create `eslint.config.js`](#2-create-eslintconfigjs)
+  - [3. Port the old overrides](#3-port-the-old-overrides)
+  - [4. Delete the legacy config](#4-delete-the-legacy-config)
+  - [5. Update the npm scripts](#5-update-the-npm-scripts)
+  - [6. Update CI](#6-update-ci)
+  - [7. Run, auto-fix, then fix the rest by hand](#7-run-auto-fix-then-fix-the-rest-by-hand)
+  - [8. Verify](#8-verify)
+- [Gotchas](#gotchas)
+
+---
+
 ## Why the Dependabot PR fails
 
 Dependabot changes the version in `package.json` and the lockfile, and nothing

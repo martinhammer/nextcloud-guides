@@ -13,8 +13,35 @@ that draws on a `<canvas>`.
   `ThemingController::getThemeStylesheet`, `core/templates/layout.user.php`) is the
   same in `stable34`, `stable35` and `master` as of October 2026. Chart.js 4.5,
   vue-chartjs 5.3.
-- **Reference implementation:** flightjournal's `src/colorRamp.ts`,
-  `src/chartTheme.ts`, `src/chartPlugins.ts` and `src/components/analytics/`
+- **Self-contained:** the code below (colour maths, theme object, live updates,
+  value labels) is complete; no other app's code is needed
+
+---
+
+**Contents**
+
+- [The rules](#the-rules)
+- [Where Nextcloud puts its colours](#where-nextcloud-puts-its-colours)
+- [Which variables to use](#which-variables-to-use)
+- [Building the palette](#building-the-palette)
+- [Reading the theme in code](#reading-the-theme-in-code)
+  - [The colour maths](#the-colour-maths)
+  - [The theme object](#the-theme-object)
+- [Keeping it live](#keeping-it-live)
+- [Chart.js setup](#chartjs-setup)
+  - [Register only what you use, and lazy-load the view](#register-only-what-you-use-and-lazy-load-the-view)
+  - [Set the theme on every chart; don't rely on the defaults](#set-the-theme-on-every-chart-dont-rely-on-the-defaults)
+  - [Tooltips follow the pointer](#tooltips-follow-the-pointer)
+  - [Drill-through: every element or none](#drill-through-every-element-or-none)
+  - [vue-chartjs details](#vue-chartjs-details)
+  - [Writing values on the marks](#writing-values-on-the-marks)
+- [Marks and layout](#marks-and-layout)
+- [Canvas or HTML?](#canvas-or-html)
+- [Accessibility](#accessibility)
+- [Testing](#testing)
+- [Common mistakes](#common-mistakes)
+- [Checklist](#checklist)
+- [Check commands](#check-commands)
 
 ---
 
@@ -120,8 +147,8 @@ doughnuts beside each other end up in visibly different blues. That happened, an
 is the reason for this rule.
 
 The palette is the solid `--color-primary-element` at **five opacities: 20%, 36%,
-53%, 69%, 85%**. The ends are tickbuddy's polar-chart range, and the steps are even
-between them. Implement each as the opaque colour that opacity produces over the page
+53%, 69%, 85%**. The steps are evenly spaced
+between those ends. Implement each as the opaque colour that opacity produces over the page
 background (plain sRGB compositing, `c·α + bg·(1−α)`), not as an `rgba()` fill. On the
 plain surface the two look identical. The opaque version keeps HTML swatches matching
 their canvas marks and keeps the contrast measurable.
@@ -143,8 +170,7 @@ clearly.
 **The faintest steps need an outline.** 20% of the primary is about 1.3:1 against
 the background, well below the 2:1 a filled mark needs on its own. So **every sliced
 chart (doughnut, polar area) outlines its slices with a 1px solid primary line**. The
-outline carries the shape and the shade only grades it, which is how tickbuddy's pale
-polar slices work. Don't use the palette's pale steps on unoutlined marks.
+outline carries the shape and the shade only grades it. Don't use the palette's pale steps on unoutlined marks.
 
 **How each chart uses it:**
 
@@ -185,9 +211,134 @@ so they can't drift apart.
 
 ## Reading the theme in code
 
+### The colour maths
+
+All chart colours come from these few functions. Keep them in one dependency-free
+module (`colorRamp.ts`), so they can be unit-tested and the canvas and the HTML
+around it use the same values. Nextcloud's primary is per user and per theme, and
+the theming app only guarantees it about 3.2:1 against the background; these
+functions keep every derived colour measurable.
+
 ```ts
-// chartTheme.ts (abridged; parseColor / blend / soften / towardBackground live in a
-// dependency-free colorRamp.ts so they can be unit-tested and run under Node)
+// colorRamp.ts
+export interface Rgb { r: number, g: number, b: number }
+
+const clamp01 = (x: number) => Math.min(1, Math.max(0, x))
+
+/** `#rgb`, `#rrggbb` (alpha ignored) or `rgb()`/`rgba()`, as the theming app emits
+ * them. Null for anything else (`var(…)`, `color-mix(…)`), so the caller falls back
+ * instead of drawing NaN. */
+export function parseColor(value: string): Rgb | null {
+	const v = value.trim().toLowerCase()
+	const hex = /^#([0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/.exec(v)
+	if (hex) {
+		let h = hex[1]
+		if (h.length <= 4) h = [...h].map((c) => c + c).join('')
+		return { r: parseInt(h.slice(0, 2), 16), g: parseInt(h.slice(2, 4), 16), b: parseInt(h.slice(4, 6), 16) }
+	}
+	const fn = /^rgba?\(\s*([\d.]+)[\s,]+([\d.]+)[\s,]+([\d.]+)/.exec(v)
+	return fn ? { r: Number(fn[1]), g: Number(fn[2]), b: Number(fn[3]) } : null
+}
+
+export function toHex(c: Rgb): string {
+	const part = (x: number) => Math.round(Math.min(255, Math.max(0, x))).toString(16).padStart(2, '0')
+	return `#${part(c.r)}${part(c.g)}${part(c.b)}`
+}
+
+const toLinear = (x: number) => { const s = x / 255; return s <= 0.04045 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4 }
+const fromLinear = (x: number) => 255 * (x <= 0.0031308 ? 12.92 * x : 1.055 * x ** (1 / 2.4) - 0.055)
+
+/** WCAG relative luminance and contrast ratio (1–21). */
+export function luminance(c: Rgb): number {
+	return 0.2126 * toLinear(c.r) + 0.7152 * toLinear(c.g) + 0.0722 * toLinear(c.b)
+}
+export function contrast(a: Rgb, b: Rgb): number {
+	const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x)
+	return (hi + 0.05) / (lo + 0.05)
+}
+
+// OKLab (Björn Ottosson): mixing here keeps steps perceptually even.
+type Lab = [number, number, number]
+function toOklab(c: Rgb): Lab {
+	const [r, g, b] = [toLinear(c.r), toLinear(c.g), toLinear(c.b)]
+	const l = Math.cbrt(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b)
+	const m = Math.cbrt(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b)
+	const s = Math.cbrt(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b)
+	return [
+		0.2104542553 * l + 0.7936177850 * m - 0.0040720468 * s,
+		1.9779984951 * l - 2.4285922050 * m + 0.4505937099 * s,
+		0.0259040371 * l + 0.7827717662 * m - 0.8086757660 * s,
+	]
+}
+function fromOklab([L, a, b]: Lab): Rgb {
+	const l = (L + 0.3963377774 * a + 0.2158037573 * b) ** 3
+	const m = (L - 0.1055613458 * a - 0.0638541728 * b) ** 3
+	const s = (L - 0.0894841775 * a - 1.2914855480 * b) ** 3
+	return {
+		r: fromLinear(clamp01(4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s)),
+		g: fromLinear(clamp01(-1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s)),
+		b: fromLinear(clamp01(-0.0041960771 * l - 0.7034186147 * m + 1.7076147010 * s)),
+	}
+}
+/** Mix in OKLab: t = 0 is `a`, t = 1 is `b`. */
+export function mix(a: Rgb, b: Rgb, t: number): Rgb {
+	const A = toOklab(a), B = toOklab(b)
+	return fromOklab([0, 1, 2].map((i) => A[i] + (B[i] - A[i]) * t) as Lab)
+}
+
+/** What `color` looks like at `opacity` over `background` (plain sRGB compositing,
+ * as the browser does for a translucent fill), as an opaque colour. */
+export function blend(color: Rgb, background: Rgb, opacity: number): Rgb {
+	const ch = (c: number, b: number) => c * opacity + b * (1 - opacity)
+	return { r: ch(color.r, background.r), g: ch(color.g, background.g), b: ch(color.b, background.b) }
+}
+
+/** `blend` at `opacity`, but never fainter than `minContrast` against the
+ * background: a pale accent gets just as much extra opacity as it needs. */
+export function soften(color: Rgb, background: Rgb, opacity: number, minContrast = 3): Rgb {
+	if (contrast(blend(color, background, opacity), background) >= minContrast) return blend(color, background, opacity)
+	if (contrast(color, background) <= minContrast) return color
+	let lo = opacity, hi = 1
+	for (let i = 0; i < 24; i++) {
+		const mid = (lo + hi) / 2
+		if (contrast(blend(color, background, mid), background) >= minContrast) hi = mid
+		else lo = mid
+	}
+	return blend(color, background, hi)
+}
+
+/** The palest mix of `color` toward `background` that still clears `minContrast`
+ * (used for the neutral "Other" grey at 2.2:1). */
+export function towardBackground(color: Rgb, background: Rgb, minContrast: number): Rgb {
+	if (contrast(color, background) <= minContrast) return color
+	let lo = 0, hi = 1
+	for (let i = 0; i < 24; i++) {
+		const t = (lo + hi) / 2
+		if (contrast(mix(color, background, t), background) >= minContrast) lo = t
+		else hi = t
+	}
+	return mix(color, background, lo)
+}
+```
+
+### The theme object
+
+```ts
+// chartTheme.ts
+import { blend, parseColor, soften, toHex, towardBackground } from './colorRamp'
+
+export interface ChartTheme {
+	primary: string // single-series fill (step 4, kept at 3:1 or more)
+	primarySolid: string // hover, outlines
+	text: string
+	textMuted: string
+	grid: string
+	surface: string
+	neutral: string // "Other", "No data"
+	font: string
+	palette: string[] // five steps, faintest to strongest
+}
+
 export const PALETTE_OPACITY = [0.2, 0.3625, 0.525, 0.6875, 0.85] as const
 export const FILL_OPACITY = PALETTE_OPACITY[3] // single-series fills
 
@@ -274,8 +425,9 @@ Chart.register(ArcElement, BarElement, CategoryScale, LinearScale, Tooltip)
 const AnalyticsView = () => import('./views/AnalyticsView.vue')
 ```
 
-For scale: flightjournal's lazy Analytics chunk, which contains Chart.js plus the
-view, is 65 kB gzipped. Its main entry chunk contains no Chart.js code.
+For scale: a lazy analytics chunk with Chart.js (bar, arc, point and radial
+elements) plus the view came to 65 kB gzipped, and the app's main entry chunk then
+contained no Chart.js code.
 
 ### Set the theme on every chart; don't rely on the defaults
 
@@ -409,6 +561,69 @@ or an Earth-circumference figure.
   you wrap it in your own component, don't call your prop `ariaLabel`: `vue-tsc`
   treats `aria-label="…"` in a parent template as an HTML attribute and reports the
   required prop as missing. Use a name such as `summary` and pass it on.
+
+### Writing values on the marks
+
+Rule 5 needs numbers on the chart itself. Chart.js has no built-in data labels; a
+small plugin writes each bar's value just past its end (a stack's total past its
+outermost segment), in the theme's text colour, never the series colour.
+
+```ts
+// chartPlugins.ts
+import { Chart, type ChartType, type Plugin } from 'chart.js'
+
+export interface ValueLabelOptions {
+	display: boolean
+	color: string
+	font: string
+	format: (value: number) => string
+}
+
+declare module 'chart.js' {
+	// eslint-disable-next-line @typescript-eslint/no-unused-vars
+	interface PluginOptionsByType<TType extends ChartType> {
+		appValueLabels?: Partial<ValueLabelOptions>
+	}
+}
+
+export const valueLabels: Plugin<'bar'> = {
+	id: 'appValueLabels',
+	afterDatasetsDraw(chart, _args, options: Partial<ValueLabelOptions>) {
+		if (!options?.display || !options.format) return
+		const horizontal = chart.options.indexAxis === 'y'
+		const metas = chart.getSortedVisibleDatasetMetas()
+		const count = chart.data.labels?.length ?? 0
+		const { ctx } = chart
+		ctx.save()
+		ctx.fillStyle = options.color ?? '#222222'
+		ctx.font = `12px ${options.font ?? 'sans-serif'}`
+		ctx.textAlign = horizontal ? 'left' : 'center'
+		ctx.textBaseline = horizontal ? 'middle' : 'bottom'
+		for (let i = 0; i < count; i++) {
+			let total = 0
+			let x = horizontal ? -Infinity : 0
+			let y = horizontal ? 0 : Infinity
+			for (const meta of metas) {
+				const value = Number(chart.data.datasets[meta.index].data[i] ?? 0)
+				const bar = meta.data[i] as unknown as { x: number, y: number } | undefined
+				if (!value || !bar) continue
+				total += value
+				if (horizontal ? bar.x > x : bar.y < y) { x = bar.x; y = bar.y } // outermost segment
+			}
+			if (total === 0) continue
+			if (horizontal) ctx.fillText(options.format(total), x + 6, y)
+			else ctx.fillText(options.format(total), x, y - 4)
+		}
+		ctx.restore()
+	},
+}
+```
+
+Pass it per chart (`:plugins="[valueLabels]"` on the vue-chartjs component) and
+configure it under `options.plugins.appValueLabels` with the theme's `text` colour and
+`font`. Leave room for the labels with `layout.padding` on the value side. Sliced and
+bubble charts label their marks the same way (an `afterDatasetsDraw` plugin), with the
+layouts described under [Marks and layout](#marks-and-layout).
 
 ## Marks and layout
 

@@ -9,7 +9,7 @@ current.
 - **Assumes:** Docker Compose, code mounted from `workspace/`, apps developed in
   `apps-extra/`
 - **Audience:** the environment maintainer (all sections) and app developers
-  ([Part 5](#part-5--what-app-developers-need-to-know) onwards)
+  ([Part 5](#part-5--notes-for-app-developers-using-this-environment))
 
 ---
 
@@ -972,7 +972,12 @@ docker compose exec -T database-mysql \
 
 ---
 
-## Part 5 — What app developers need to know
+## Part 5 — Notes for app developers using this environment
+
+Supported version ranges, testing the ends of a range, the app store's "no
+compatible version" message and the PHP floor of each major are app-development
+rules, kept in the `php-backend` skill:
+[Supported Nextcloud versions](../skills/php-backend/references/nextcloud-php-backend.md#supported-nextcloud-versions).
 
 ### 5.1 The version you are testing against is not the version users run
 
@@ -988,77 +993,7 @@ A dev build is **not** the release it is named after. Code merged after your che
 date is absent; code reverted before GA may still be present. Differences between your
 `35.0.0 dev` and a user's `35.0.0` are expected, not anomalies.
 
-### 5.2 Declare a version range, then test the ends of it
-
-`appinfo/info.xml` declares the supported range:
-
-```xml
-<dependencies>
-    <nextcloud min-version="33" max-version="35"/>
-</dependencies>
-```
-
-Nextcloud refuses to enable an app outside that range, and the app store will not offer
-it to instances outside it. Three majors are supported at once, so a range of three is
-normal — and that means **three instances to test on**, which is what the `stableNN`
-containers are for. Each is one extra container sharing the same database server, so the
-cost of keeping them around is low.
-
-| | Where | Test |
-| --- | --- | --- |
-| `min-version` | oldest `stableNN` worktree | Your floor still works |
-| middle | the other `stableNN` | The version most users are on |
-| `max-version` | `nextcloud.local` (master) | You are not about to be broken by the next major |
-
-Bump `max-version` only after testing against that major, and publish a release that
-declares it. Until you do, the app store correctly reports the app as incompatible.
-
-### 5.3 "N apps have no compatible version" is about the store, not your code
-
-The admin overview lists apps for which **the app store has no published release**
-matching the target version. It says nothing about the code on disk. A locally-mounted
-app can declare `max-version="35"` and work perfectly while still appearing in that list,
-because the store has no 35-compatible *release* of it — normal for unpublished or
-in-development apps.
-
-Check the two facts separately:
-
-```bash
-# what each app's code claims — print the app name, not just the bare tag
-for f in workspace/server/apps-extra/*/appinfo/info.xml; do
-  printf '%-22s %s\n' "$(basename "$(dirname "$(dirname "$f")")")" \
-    "$(grep -o '<nextcloud[^>]*>' "$f" | head -1)"
-done
-
-# what the instance actually enabled
-docker exec -u www-data <project>-nextcloud-1 php occ app:list
-```
-
-Read that listing against the instance's major. An app whose `max-version` is below it
-**cannot be enabled at all** — a local blocker you fix by testing and bumping the range,
-and a different problem from the store-compatibility message above.
-
-### 5.4 The PHP floor moves with the major
-
-The server enforces a minimum and an upper bound at runtime, and both move. Read them
-from the checkout rather than assuming:
-
-```bash
-grep -A2 'PHP_VERSION_ID' workspace/server/lib/versioncheck.php
-```
-
-| Nextcloud | PHP | Default dev image |
-| --- | --- | --- |
-| 34 | 8.2 – 8.5 | `nextcloud-dev-php83` |
-| 35 | 8.3 – 8.5 | `nextcloud-dev-php85` |
-
-If your app supports a range of majors, its PHP floor is the **lowest** in that range —
-but the syntax must also parse on the highest. Testing only on `nextcloud.local`
-(PHP 8.5) will not catch an 8.2 incompatibility; that is what the stable containers are
-for. Override per-run with `PHP_VERSION=84 docker compose up -d nextcloud` rather than
-editing `.env`, which moves every service at once.
-
-### 5.5 Where to put an app that spans several majors
+### 5.2 Where to put an app that spans several majors
 
 The environment offers two mount points, and the choice is about how many places your
 app has to arrive in — not about how you build it.
@@ -1101,7 +1036,7 @@ Re-stage from your own source after every change you expect to see, and treat a
 `diff` between a deployed tree and its repository as expected noise rather than as
 evidence of anything.
 
-### 5.6 Useful defaults
+### 5.3 Useful defaults
 
 Every instance installs with the same fixtures, which is what makes them disposable:
 

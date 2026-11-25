@@ -10,7 +10,6 @@ The guides have been prepared using AI coding tools (Claude Code in particular).
 | --- | --- |
 | [App icon contract](skills/app-icons/references/nextcloud-app-icon-contract.md) | `img/app.svg` / `app-dark.svg`: where paint may go, the file pair, a check script |
 | [Charts](skills/charts/references/nextcloud-charts.md) | Theme-aware Chart.js charts: one runtime palette, live theme changes, accessibility |
-| [Dev environment](skills/dev-environment/references/nextcloud-dev-environment-maintenance.md) | `nextcloud-docker-dev`: containers, versions, maintenance runbook, notes for app developers |
 | [ESLint config v9 migration](skills/eslint-v9-migration/references/nextcloud-eslint-config-v9-migration.md) | `@nextcloud/eslint-config` 8 → 9 (ESLint 10, flat config) |
 | [GitHub CI](skills/github-ci/references/nextcloud-github-ci.md) | Org workflow templates, syncing them outside the `nextcloud` org, audit script |
 | [HTTP client](skills/http-client/SKILL.md) | `IClient` vs plain Guzzle: `getAsync()` is synchronous, `stream` is ignored |
@@ -18,6 +17,14 @@ The guides have been prepared using AI coding tools (Claude Code in particular).
 | [PHP backend](skills/php-backend/references/nextcloud-php-backend.md) | Config APIs and reserved keys, migrations, app version, OpenAPI, Composer/vendor-bin, Psalm, test bootstrap |
 | [Responsive layout](skills/responsive-layout/references/nextcloud-responsive-layout.md) | Nextcloud's 1024/512 breakpoints, content-width steps, list/detail, two-line cards, touch |
 | [Vue frontend](skills/vue-frontend/references/nextcloud-vue-frontend.md) | `@nextcloud/vue` 9 drift, component quirks, core CSS vs app CSS, theme colour pairs, dialogs, build and CI wiring |
+
+## Guides for people
+
+Not skills: guides for maintaining the environment the apps are developed in.
+
+| Guide | What it covers |
+| --- | --- |
+| [Dev environment](guides/nextcloud-dev-environment-maintenance.md) | `nextcloud-docker-dev`: containers, versions, maintenance runbook, notes for app developers |
 
 ## Use with Claude Code
 

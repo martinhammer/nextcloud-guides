@@ -17,6 +17,23 @@ the end against your own repo and compare the result with this guide.
 
 ---
 
+**Contents**
+
+- [The rule](#the-rule)
+- [The baseline set](#the-baseline-set)
+- [What the repository must provide](#what-the-repository-must-provide)
+- [Apps outside the `nextcloud` org](#apps-outside-the-nextcloud-org)
+- [Keeping workflows in sync](#keeping-workflows-in-sync)
+- [Audit your repo](#audit-your-repo)
+- [Reading a failure](#reading-a-failure)
+- [Field notes](#field-notes)
+  - [2026-10-24 — Psalm fails on every PR: `roave/security-advisories` vs the platform PHP pin](#2026-10-24--psalm-fails-on-every-pr-roavesecurity-advisories-vs-the-platform-php-pin)
+  - [2026-10-25 — Adding test workflows: green jobs that test nothing, and an app that will not enable](#2026-10-25--adding-test-workflows-green-jobs-that-test-nothing-and-an-app-that-will-not-enable)
+  - [2026-10-28 — Review: retired templates, owner guards, and what a naive sync breaks](#2026-10-28--review-retired-templates-owner-guards-and-what-a-naive-sync-breaks)
+  - [2026-11-01 — `npm-audit-fix` fails every week on stable branches the app does not have](#2026-11-01--npm-audit-fix-fails-every-week-on-stable-branches-the-app-does-not-have)
+
+---
+
 ## The rule
 
 > **The source of truth is `nextcloud/.github/workflow-templates/`. Not the

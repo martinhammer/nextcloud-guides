@@ -14,6 +14,10 @@ description: "Theme-aware charts in Nextcloud app frontends (Chart.js via vue-ch
 5. Never put a value only in a tooltip. Label the marks, and give every canvas a
    text alternative. Tooltips follow the pointer.
 
-Read `${CLAUDE_SKILL_DIR}/references/nextcloud-charts.md` before writing chart code: it has the
-palette code, the theme-reading and live-update code, Chart.js setup, the checklist
-and check commands. Use them as given, so charts match across apps.
+The guide `${CLAUDE_SKILL_DIR}/references/nextcloud-charts.md` is long: read the
+sections the task needs (its contents list is at the top), and use its code as
+given, so charts match across apps.
+- New chart or first chart in an app: "Building the palette", "Reading the theme in
+  code", "Keeping it live", "Chart.js setup".
+- Choosing or styling marks, labels, legends: "Marks and layout", "Canvas or HTML?".
+- Reviewing a chart: "Common mistakes" and "Checklist"; then "Check commands".

@@ -1,6 +1,6 @@
 ---
 name: php-backend
-description: "Rules for a Nextcloud app's PHP backend learned the hard way: storing app and per-user settings (IAppConfig, IUserConfig, core's reserved keys), immutable migrations, app version bumps, OpenAPI docblocks and openapi.json generation, settings registration, Psalm level 1 and vendor-bin tooling, PHPUnit bootstrap modes, the Composer autoloader, database strictness. This skill should be used when writing or reviewing PHP under lib/, migrations, appinfo/info.xml, composer.json or psalm.xml, when storing any setting or per-user value, when composer openapi or Psalm fails, and whenever an app returns 500 after a schema change, fails to enable or upgrade (occ app:enable errors included), or breaks the whole instance."
+description: "Rules for a Nextcloud app's PHP backend learned the hard way: storing app and per-user settings (IAppConfig, IUserConfig, core's reserved keys), immutable migrations, app version bumps, OpenAPI docblocks and openapi.json generation, settings registration, Psalm level 1 and vendor-bin tooling, PHPUnit bootstrap modes, the Composer autoloader, database strictness. This skill should be used when writing or reviewing PHP under lib/, migrations, appinfo/info.xml, composer.json or psalm.xml, when storing any setting or per-user value, when choosing or widening the supported Nextcloud version range, when composer openapi or Psalm fails, and whenever an app returns 500 after a schema change, fails to enable or upgrade (occ app:enable errors included), or breaks the whole instance."
 paths: "lib/**/*.php, appinfo/**, tests/**/*.php, composer.json, psalm.xml, rector.php, vendor-bin/**"
 ---
 
@@ -19,6 +19,9 @@ The rules most often broken (details and reasons in the guide):
   settings or job registration in `info.xml`). Never lower it.
 - **Every routed controller method needs full OpenAPI docblocks**; regenerate and
   commit `openapi.json` when an endpoint changes.
+- **Supported versions:** declare the range in `info.xml`, test its oldest and newest
+  major, and take the PHP floor from the lowest major. A dev instance is a checkout,
+  not a release.
 - **Settings panels** call both `Util::addScript()` and `Util::addStyle()`.
 - **Dev-tool dependencies live in `vendor-bin/<tool>`**, never in the app's
   `composer.json`, least of all a library the server ships (doctrine/dbal).
