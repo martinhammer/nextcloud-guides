@@ -1,0 +1,66 @@
+[
+  {
+    "query": "add an admin setting for the zenquotes base URL. where and how should I store the value?",
+    "should_trigger": true
+  },
+  {
+    "query": "I renamed a column in the existing migration and now GET /settings returns 500",
+    "should_trigger": true
+  },
+  {
+    "query": "occ app:enable dailyzenquote fails with Undefined constant Doctrine\\DBAL\\Types\\Types::NUMBER",
+    "should_trigger": true
+  },
+  {
+    "query": "make openapi fails since I added a new method to ApiController",
+    "should_trigger": true
+  },
+  {
+    "query": "psalm says PersonalSection is unused, but nextcloud loads it. what's the right fix?",
+    "should_trigger": true
+  },
+  {
+    "query": "do I need to bump the version in info.xml for this caching change in QuoteService?",
+    "should_trigger": true
+  },
+  {
+    "query": "phpunit passes locally but in the phpunit-sqlite CI job it can't find the OCP classes",
+    "should_trigger": true
+  },
+  {
+    "query": "I need to store per user when they last opened the widget",
+    "should_trigger": true
+  },
+  {
+    "query": "QuoteService should fetch the quote and the on-this-day data in parallel with getAsync",
+    "should_trigger": false
+  },
+  {
+    "query": "the error toast is blank when saving the settings fails",
+    "should_trigger": false
+  },
+  {
+    "query": "the npm-audit-fix workflow fails every week on a stable branch",
+    "should_trigger": false
+  },
+  {
+    "query": "the settings radio buttons don't stay selected when clicked",
+    "should_trigger": false
+  },
+  {
+    "query": "how do I start a Nextcloud 36 instance to test the app against?",
+    "should_trigger": false
+  },
+  {
+    "query": "summarize what changed in the last 5 commits",
+    "should_trigger": false
+  },
+  {
+    "query": "translate the README into German",
+    "should_trigger": false
+  },
+  {
+    "query": "the carousel should show dots instead of the '2 / 5' counter",
+    "should_trigger": false
+  }
+]

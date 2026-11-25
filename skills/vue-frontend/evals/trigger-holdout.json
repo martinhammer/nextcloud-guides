@@ -1,0 +1,26 @@
+[
+  {
+    "query": "the NcSelect I added to the settings overflows its column and won't shrink",
+    "should_trigger": true
+  },
+  {
+    "query": "my CSS module rule for input.checkbox has no effect at all",
+    "should_trigger": true
+  },
+  {
+    "query": "after upgrading @nextcloud/vue the build still passes but one button lost its colour",
+    "should_trigger": true
+  },
+  {
+    "query": "the text field shows its label inside but my placeholder never appears",
+    "should_trigger": true
+  },
+  {
+    "query": "add a legend under the authors chart",
+    "should_trigger": false
+  },
+  {
+    "query": "why do some OCS responses come back as XML?",
+    "should_trigger": false
+  }
+]

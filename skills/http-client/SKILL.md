@@ -1,6 +1,6 @@
 ---
 name: http-client
-description: Behaviour of Nextcloud's HTTP client (OCP\Http\Client\IClientService / IClient) that differs from plain Guzzle - getAsync() is synchronous and stream => true is ignored. Use before relying on async, streaming or callback behaviour of IClient, or when outgoing HTTP requests from an app's PHP code behave unexpectedly.
+description: "Behaviour of Nextcloud's HTTP client (IClientService / IClient) that differs from plain Guzzle: getAsync() is synchronous and 'stream' => true is ignored. This skill should be used before relying on async, parallel, streaming or callback behaviour of outgoing requests from an app's PHP code, and when such requests are slow or behave unexpectedly."
 ---
 
 # Nextcloud's HTTP client
@@ -15,12 +15,11 @@ Checked on Nextcloud 34, 35 and 36 (November 2026):
 **Probe behaviour with the client built the way Nextcloud builds it, never with
 plain Guzzle.** Guzzle's default client gives wrong answers (an earlier probe that
 way "proved" parallelism, and the shipped build fetched nothing). Build a harness
-from the server checkouts in `~/Code/nextcloud-docker-dev/workspace/{stable34,stable35,server}`:
+from a server checkout of each supported major (nextcloud-docker-dev's `workspace/`):
 `OC\Http\Client\Client` with `HandlerStack::create(new CurlHandler())` plus the
 event-logger middleware, as `ClientService::newClient()` does, the 3rdparty and
 OCP/OC autoloaders, stubbed `IConfig`/`ICertificateManager`/`IRemoteHostValidator`,
 and a local `php -S` server. Run the app's own code through it before calling an
 API working.
 
-Full write-up of the original investigation: `~/Code/stubbypod-sync/docs/async-http.md`.
 When a new Nextcloud major changes this, update this skill.

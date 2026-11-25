@@ -1,0 +1,26 @@
+[
+  {
+    "query": "the new admin settings section loads completely unstyled",
+    "should_trigger": true
+  },
+  {
+    "query": "standalone phpunit can't find Doctrine\\DBAL\\ParameterType",
+    "should_trigger": true
+  },
+  {
+    "query": "an insert works in CI but MySQL on the test server refuses it",
+    "should_trigger": true
+  },
+  {
+    "query": "rector deleted setUp() from all my test classes",
+    "should_trigger": true
+  },
+  {
+    "query": "then() on getAsync never runs in QuoteService",
+    "should_trigger": false
+  },
+  {
+    "query": "the node-test CI job is green but I'm not sure it runs anything",
+    "should_trigger": false
+  }
+]

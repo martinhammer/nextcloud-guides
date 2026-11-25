@@ -1,6 +1,6 @@
 ---
 name: github-ci
-description: GitHub Actions CI for Nextcloud apps outside the nextcloud org - the org templates in nextcloud/.github are the source of truth, the post-sync step, .yml.patch files, the audit script and known failures. Use when adding, syncing or auditing .github/workflows, when a CI job fails, or when one goes green without testing anything.
+description: "GitHub Actions CI for Nextcloud apps outside the nextcloud org: the org templates as source of truth, the post-sync step, .yml.patch files, the audit script, known failures. This skill should be used when adding, syncing or auditing anything in .github/workflows, when a CI job fails or a scheduled run goes red, and when a job passes without testing anything."
 paths: ".github/workflows/**"
 ---
 
@@ -17,6 +17,6 @@ the day it was copied). Dependabot bumps only action SHAs, never steps.
 - Each app's CLAUDE.md lists only its own deviations (its patches, deliberately
   absent workflows). The procedure itself is here.
 
-Read `${CLAUDE_SKILL_DIR}/nextcloud-github-ci.md` before touching workflows: the
+Read `${CLAUDE_SKILL_DIR}/references/nextcloud-github-ci.md` before touching workflows: the
 baseline set, what the repository must provide, syncing, the audit script (run it
 and compare), reading a failure, and the field notes on past failures.

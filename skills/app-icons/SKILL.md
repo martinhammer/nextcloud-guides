@@ -1,6 +1,6 @@
 ---
 name: app-icons
-description: Nextcloud app icon contract for img/app.svg, img/app-dark.svg and img/<appid>(-dark).svg - paint only on the root <svg>, the file pair, and a check script. Use when creating, editing or reviewing an app icon, or when an icon shows in the wrong colour, white on white, or doesn't follow the theme.
+description: "Nextcloud app icon contract for img/app.svg, img/app-dark.svg and img/<appid>(-dark).svg: where paint may go, the file pair, and a check script. This skill should be used when creating, editing or reviewing an app icon, and whenever an icon shows in the wrong colour, white on white, invisible in the header, or doesn't follow the theme."
 paths: "img/*.svg"
 ---
 
@@ -18,6 +18,6 @@ Blocking rules (full table and reasons in the guide):
 - **R5** Both parse: `xmllint --noout img/app*.svg`.
 - Convention **R4**: the pair is identical apart from that one fill attribute.
 
-Before changing an icon, read `${CLAUDE_SKILL_DIR}/nextcloud-app-icon-contract.md`
+Before changing an icon, read `${CLAUDE_SKILL_DIR}/references/nextcloud-app-icon-contract.md`
 (where each surface paints the icon, rules per supported version, checklist), and
 run the check script from its "Verify" section afterwards.

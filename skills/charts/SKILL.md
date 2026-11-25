@@ -1,6 +1,6 @@
 ---
 name: charts
-description: Drawing charts in a Nextcloud app frontend (Chart.js via vue-chartjs, or any canvas library) so they look native in every theme, accent colour and high-contrast mode, using one runtime palette. Use when adding, restyling or reviewing a chart, legend, ranked bar or stat tile, or when chart colours or text look wrong in a dark or high-contrast theme.
+description: "Theme-aware charts in Nextcloud app frontends (Chart.js via vue-chartjs, or any canvas library): one runtime palette taken from the theme, live theme changes, accessibility. This skill should be used when adding, restyling or reviewing any chart, legend, ranked bar, sparkline or stat tile, and when chart colours or text look wrong in a dark or high-contrast theme."
 ---
 
 # Nextcloud charts
@@ -14,6 +14,6 @@ description: Drawing charts in a Nextcloud app frontend (Chart.js via vue-chartj
 5. Never put a value only in a tooltip. Label the marks, and give every canvas a
    text alternative. Tooltips follow the pointer.
 
-Read `${CLAUDE_SKILL_DIR}/nextcloud-charts.md` before writing chart code: it has the
+Read `${CLAUDE_SKILL_DIR}/references/nextcloud-charts.md` before writing chart code: it has the
 palette code, the theme-reading and live-update code, Chart.js setup, the checklist
 and check commands. Use them as given, so charts match across apps.

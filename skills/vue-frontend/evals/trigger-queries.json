@@ -1,0 +1,66 @@
+[
+  {
+    "query": "the save button on the settings page renders grey even though I set type=\"primary\" on the NcButton",
+    "should_trigger": true
+  },
+  {
+    "query": "in Settings.vue the radio choice doesn't stay selected when I click another option, the NcCheckboxRadioSwitch looks stuck",
+    "should_trigger": true
+  },
+  {
+    "query": "I added an NcTextField for an API key in the settings, but whatever I type the PUT sends an empty value",
+    "should_trigger": true
+  },
+  {
+    "query": "the carousel arrow buttons in the widget are way taller than the 24px I set in the css, where does the extra height come from?",
+    "should_trigger": true
+  },
+  {
+    "query": "the warning icon next to the error text is invisible in the light theme, I used color: var(--color-warning)",
+    "should_trigger": true
+  },
+  {
+    "query": "after bumping @nextcloud/dialogs the toasts disappeared completely",
+    "should_trigger": true
+  },
+  {
+    "query": "dependabot wants vite 8 and npm ci now fails with ERESOLVE. what's the right fix?",
+    "should_trigger": true
+  },
+  {
+    "query": "add a confirmation step before 'reset to defaults' in the settings, the user has to confirm first",
+    "should_trigger": true
+  },
+  {
+    "query": "why does the error toast show nothing when the API answers 400?",
+    "should_trigger": false
+  },
+  {
+    "query": "make the widget switch to a compact layout on phones",
+    "should_trigger": false
+  },
+  {
+    "query": "the app icon is white on white in the apps list",
+    "should_trigger": false
+  },
+  {
+    "query": "migrate .eslintrc.cjs to the new flat eslint.config.js",
+    "should_trigger": false
+  },
+  {
+    "query": "add a php endpoint that returns yesterday's quote",
+    "should_trigger": false
+  },
+  {
+    "query": "explain how the Fisher-Yates shuffle in useWidgetContent.ts works",
+    "should_trigger": false
+  },
+  {
+    "query": "add a small bar chart of the most quoted authors to the settings page",
+    "should_trigger": false
+  },
+  {
+    "query": "update the screenshots section of the README",
+    "should_trigger": false
+  }
+]
