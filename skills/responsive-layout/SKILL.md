@@ -1,6 +1,6 @@
 ---
 name: responsive-layout
-description: "Responsive layout in Nextcloud app frontends the way Nextcloud itself does it: the 1024/512 breakpoints from @nextcloud/vue, content-width steps for lists, NcAppContent list/detail, touch vs mouse, two-line cards. This skill should be used when building or reworking any view for narrow windows or phones, hiding columns, turning a table into cards, reacting to the sidebar or navigation, or picking a breakpoint."
+description: "Responsive layout in Nextcloud app frontends the way Nextcloud itself does it: the 1024/512 breakpoints from @nextcloud/vue, content-width steps for lists, NcAppContent list/detail, touch vs mouse, two-line cards. This skill should be used when building or reworking any view for narrow windows or phones, hiding columns, turning a table into cards, reacting to the sidebar or navigation, or picking a breakpoint, and when the navigation drawer stays open after picking a view on a phone or a navigation item changes the URL hash unexpectedly."
 ---
 
 # Nextcloud responsive layout
@@ -21,7 +21,10 @@ Two questions, two tools:
 
 Before building: `@nextcloud/vue` already adapts `NcAppNavigation`, `NcAppSidebar`
 and `NcAppContent` (list/detail with forced `no-split` on mobile). Use those, don't
-rebuild them.
+rebuild them. One gap: a click on an `NcAppNavigationItem` closes the mobile
+drawer only for router links (`to`); with `href` or `@click` items, emit
+`toggle-navigation` `{ open: false }` on `@nextcloud/event-bus` yourself (see the
+reference).
 
 Read `${CLAUDE_SKILL_DIR}/references/nextcloud-responsive-layout.md` for the code (composable,
 container setup, column steps, two-line cards, sort menu) and the widths to check.

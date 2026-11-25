@@ -45,6 +45,11 @@ don't catch, and the conventions the apps follow.
   input.
 - **No Tooltip directive in v9**: icon-only buttons carry a native `title` with the
   same text as their `aria-label`.
+- **`NcAppNavigation` requires `aria-label` or `aria-labelledby`** (since 9.0.0,
+  nextcloud-vue #7350): without either it logs "NcAppNavigation requires either
+  `ariaLabel` or `ariaLabelledby` to be set for accessibility." and renders the
+  `<nav>` landmark unnamed. Name what the list holds, translated, as Nextcloud's App
+  Store app does: `:aria-label="t('appstore', 'Appstore categories')"`.
 - **`NcColorPicker`** models `string | undefined`; map `''` at that boundary.
 - **Icons from `vue-material-design-icons`**: the package's `exports` map hides its
   type declarations, so every import is an implicit `any` under `noImplicitAny`. Add a

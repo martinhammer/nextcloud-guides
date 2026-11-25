@@ -13,6 +13,8 @@ The rules most often broken (details and reasons in the guide):
   `:checked`/`@update:checked`. The last two **type-check and fail silently at
   runtime**: say what needs checking in the running app.
 - **Run `npm run typecheck` after every `@nextcloud/vue` bump.**
+- **`NcAppNavigation` needs `aria-label` (or `aria-labelledby`)**: without one it
+  logs a console warning and the navigation landmark has no name.
 - **Core CSS styles every bare `<button>`** at (0,2,1): make links `<a href>`, or
   double the class and reset explicitly. Win on specificity, never on load order.
   In a CSS module, write core and library classes as `:global(.name)`.

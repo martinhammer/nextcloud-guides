@@ -6,8 +6,10 @@ invents breakpoints again.
 
 - **Applies to:** Vue 3 app frontends built on `@nextcloud/vue` 9
 - **Researched against (2026-11-24):** `@nextcloud/vue` 9.14.1
-  (`src/composables/useIsMobile`, `NcAppContent`, `NcAppNavigation`, `NcAppSidebar`);
-  `nextcloud/server` master of 2026-10-25 (`apps/files/src/composables/useFileListWidth.ts`,
+  (`src/composables/useIsMobile`, `NcAppContent`, `NcAppNavigation`, `NcAppNavigationItem`
+  `onClick`, `NcAppSidebar`);
+  `nextcloud/server` master of 2026-10-25 (`apps/appstore/src/views/AppstoreNavigation.vue`,
+  `apps/files/src/composables/useFileListWidth.ts`,
   `FilesListVirtual.vue`, `core/src/components/UnifiedSearch/UnifiedSearchInput.vue`,
   `apps/comments`); `nextcloud/mail` and `nextcloud/calendar` main of 2026-11-24;
   the developer manual (CSS variables, design layout pages)
@@ -52,6 +54,32 @@ What the reference apps do:
 ## What the library already does
 
 - **`NcAppNavigation`** starts closed on mobile and becomes an overlay with a focus trap.
+  It closes itself on a click outside it and on Escape. **A click on an item closes it
+  only for router links**: `NcAppNavigationItem`'s `onClick` emits `toggle-navigation`
+  only when the item has a `routerLinkHref` (a `to` prop) and the window is mobile.
+  Items with `href` (hash routing) or a plain `@click` leave the drawer open over the
+  view just picked. Close it yourself the way the library does, on the event bus
+  (`NcAppNavigation` has no controlled `open` prop; Nextcloud's App Store app
+  uses the same event, there to open it):
+
+  ```ts
+  import { emit } from '@nextcloud/event-bus'   // declare it in package.json
+  import { useIsMobile } from '@nextcloud/vue/composables/useIsMobile'
+
+  const isMobile = useIsMobile()
+  function closeNavigationOnMobile(event: MouseEvent): void {
+  	// a modifier-key click opens a new tab: leave the drawer as it is
+  	if (!isMobile.value || event.metaKey || event.altKey || event.ctrlKey || event.shiftKey) return
+  	emit('toggle-navigation', { open: false })
+  }
+  ```
+
+  and put `@click="closeNavigationOnMobile"` on each `NcAppNavigationItem`, keeping
+  its `href` so open-in-new-tab still works.
+- **An `NcAppNavigationItem` with neither `to` nor `href` renders `<a href="#">`**
+  (`href || routerLinkHref || '#'`). A click on it sets the URL hash to `#`, which a
+  hash-routed app reads as a navigation, and adds a history entry. Give such items
+  `@click.prevent="…"`, or a real `href`.
 - **`NcAppSidebar`** is `clamp(300px, 27vw, 500px)` wide, so on a desktop it takes up
   to 500px from the content area; below 512px it becomes full width (`100vw`).
 - **`NcAppContent`** with a `list` slot: `layout` `vertical-split` (resizable list,
