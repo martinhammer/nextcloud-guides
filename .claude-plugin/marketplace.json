@@ -9,7 +9,8 @@
     {
       "name": "nextcloud",
       "source": "./",
-      "description": "Tested guidance for building and maintaining Nextcloud apps: CI workflows, app icons, charts, OCS error handling, the HTTP client, ESLint v9 and the nextcloud-docker-dev environment."
+      "description": "Tested guidance for building and maintaining Nextcloud apps: PHP backend, Vue frontend, responsive layout, dashboard widgets, charts, app icons, OCS errors, the HTTP client, CI workflows, ESLint v9 and the shared project files (Makefile, .gitignore, .nextcloudignore).",
+      "license": "AGPL-3.0-or-later"
     }
   ]
 }
