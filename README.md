@@ -43,3 +43,11 @@ claude plugin install nextcloud@nextcloud-guides --scope project
 `--scope project` enables the plugin in that repository only (in `.claude/settings.json`).
 Added from a local directory, the plugin is read in place: edits to the guides take
 effect at the next session or after `/reload-plugins`.
+
+## Licence
+
+Copyright (C) 2026 Martin Hammer
+
+The guides, skills, scripts and code examples in this repository are licensed under
+the GNU Affero General Public License, version 3 or (at your option) any later
+version (`AGPL-3.0-or-later`), the licence Nextcloud itself uses. See `LICENSE`.
