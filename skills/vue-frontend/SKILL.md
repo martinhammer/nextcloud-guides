@@ -23,6 +23,9 @@ The rules most often broken (details and reasons in the guide):
 - **Toolkit only:** `NcDialog` for prompts and confirms, `@nextcloud/dialogs` for
   toasts; never `window.confirm/alert/prompt`. Since dialogs v8, don't import
   `@nextcloud/dialogs/style.css`.
+- **Create buttons are "New X" with the `Plus.vue` icon.** An on/off icon button
+  shows the state in its icon and names the action, without `aria-pressed`.
+  Place display controls and actions consistently across views.
 - **First day of week: `getFirstDay()` from `@nextcloud/l10n`**, never
   `Intl.Locale` week info (browsers disagree, and it ignores the user's setting).
 - **`generateOcsUrl` encodes `/` inside a `{param}`**: interpolate multi-segment

@@ -98,6 +98,33 @@ don't catch, and the conventions the apps follow.
   stays readable in both themes. Values: `apps/theming/lib/Themes/{Default,Dark}Theme.php`.
 - Charts: the `charts` skill. App icons: the `app-icons` skill.
 
+## Buttons and toolbars
+
+- **A "create" button is "New X" with the `Plus.vue` icon** in `#icon`, never a
+  typed "+" in the label: Notes' "New note"
+  ([`NotesView.vue`](https://github.com/nextcloud/notes/blob/main/src/components/NotesView.vue),
+  primary), Contacts' "New contact"
+  ([`Contacts.vue`](https://github.com/nextcloud/contacts/blob/main/src/views/Contacts.vue),
+  secondary). Deck says "Add board" / "Add card", also with the Plus icon. Let the
+  dialog it opens carry the same "New X" title.
+- **An on/off icon button: the icon shows the current state, the name says what a
+  click does** ("Show …" / "Hide …", as `aria-label` and `title`). Then **don't set
+  `aria-pressed`**: a screen reader would announce "Hide …, pressed", which
+  contradicts itself. The ARIA guidance is that a toggle's label must not change
+  when its state does
+  ([APG button pattern](https://www.w3.org/WAI/ARIA/apg/patterns/button/)). If you
+  want a real toggle, keep one fixed name and use `NcButton`'s `pressed` prop
+  (`v-model:pressed`), which sets `aria-pressed` and switches the button to the
+  primary variant while pressed. Where there is room, a worded
+  `NcCheckboxRadioSwitch` states the condition better than either; an icon button is
+  for narrow layouts.
+- **Place controls the same way on every view.** Before adding a toolbar control,
+  look at where the other views put theirs: display controls (sort, filters, show
+  hidden) and actions (refresh, create) should sit in the same arrangement
+  everywhere, so a control is where the user's hand already goes. Check this again
+  whenever a control moves between layouts (wide toolbar, compact toolbar,
+  navigation).
+
 ## Dialogs, toasts, native UI
 
 - **Only toolkit UI**: `@nextcloud/vue` components; `NcDialog` (with `NcButton`s in

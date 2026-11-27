@@ -111,6 +111,20 @@ mobile, chosen by `useIsMobile()`), anything tied to the navigation becoming an
 overlay (e.g. an extra "Add" button because the navigation entry is out of sight),
 and layout of things that follow the window, not the content.
 
+**An app-wide action in the navigation header (Refresh, New …).** Mail's precedent:
+[`Navigation.vue`](https://github.com/nextcloud/mail/blob/main/src/components/Navigation.vue)
+puts
+[`NewMessageButtonHeader.vue`](https://github.com/nextcloud/mail/blob/main/src/components/NewMessageButtonHeader.vue)
+in `NcAppNavigation`'s `#search` slot, which renders above the list. The row holds a
+wide secondary "New message" button and an icon-only Refresh `NcButton`:
+`variant="tertiary-no-background"`, `aria-label` "Refresh", `Refresh.vue` icon at
+size 20 swapped for `NcLoadingIcon` and `:disabled` while it runs, row padding
+`calc(var(--default-grid-baseline, 4px) * 2)`. Mail keeps it in the drawer on a
+phone too, where it is out of sight until the drawer opens. When the action should
+stay one tap away, render it in the header only when `!isMobile` and in each view's
+toolbar when `isMobile`: the switch is about the navigation becoming a drawer, so it
+is a mode decision, not a space one.
+
 ## Space decisions
 
 ### CSS only: container queries
@@ -131,6 +145,16 @@ and layout of things that follow the window, not the content.
   screens also use.
 - A container query can't take a custom property either: each literal must be
   repeated, so comment every copy with where the others are.
+- **A container query never matches the container itself**: an element's query
+  container is its nearest *ancestor* container
+  ([CSS Containment 3, `@container`](https://www.w3.org/TR/css-contain-3/#container-rule)).
+  A rule like `.xx-list-view { --row-min: 100px }` inside
+  `@container xx-list (…)` silently never applies; set the value on an element
+  inside the container instead, and mind that other rules setting the same
+  variable on that element now compete with it by specificity.
+- **A date heading in a narrow toolbar**: switch to `getMonthNamesShort()` from
+  `@nextcloud/l10n` at the narrow step and keep the year in full; a two-digit year
+  saves two characters and makes "Nov 26" read as a day.
 
 ### When script must know: a content-width composable
 
